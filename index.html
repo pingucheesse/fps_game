@@ -105,6 +105,22 @@
       color: rgba(255,255,255,0.35); font-size: 0.75rem; letter-spacing: 0.1em;
     }
 
+    /* ── Room code (host only) ── */
+    #room-code-hud {
+      position: absolute; top: 0.75rem; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.38); font-size: 0.65rem; letter-spacing: 0.28em;
+      text-transform: uppercase; pointer-events: none; display: none;
+    }
+
+    /* ── Event notifications ── */
+    #notification {
+      position: absolute; top: 2.3rem; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.88); font-size: 0.7rem; letter-spacing: 0.1em;
+      text-transform: uppercase; background: rgba(0,0,0,0.48);
+      padding: 0.28rem 0.85rem; pointer-events: none;
+      opacity: 0; transition: opacity 0.25s ease; white-space: nowrap;
+    }
+
     /* ── Health / Armor bars ── */
     #health-display {
       position: absolute; bottom: 1.5rem; left: 1.5rem;
@@ -200,6 +216,8 @@
   <!-- ── HUD ── -->
   <div id="hud">
     <div id="hit-flash"></div>
+    <div id="room-code-hud"></div>
+    <div id="notification"></div>
     <div id="crosshair"></div>
     <div id="peer-count"></div>
     <div id="lock-hint">Click to aim · WASD to move · LMB to shoot</div>

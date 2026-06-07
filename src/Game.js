@@ -40,6 +40,9 @@ export class Game {
     this.armor = MAX_ARMOR;
     this.hud.setHealth(this.hp, this.armor);
 
+    // Show room code at top of screen for the host
+    if (net?.isHost && net.roomCode) this.hud.setRoomCode(net.roomCode);
+
     this._animId   = null;
     this._syncAccum = 0; // ms accumulator for network sync (in-loop, no setInterval)
     this._prevTime = 0;
@@ -184,6 +187,7 @@ export class Game {
 
     net.on('newPeer', (msg) => {
       this.hud.setPeerCount(net.peerCount);
+      this.hud.showNotification('Player joined');
       if (net.isHost) net.sendTo(msg.id, { type: 'worldState', walls: this.wallManager.serialize(), players: [] });
     });
 
@@ -191,6 +195,7 @@ export class Game {
       const rp = this.remotePlayers.get(msg.id);
       if (rp) { rp.dispose(this.scene); this.remotePlayers.delete(msg.id); }
       this.hud.setPeerCount(net.peerCount);
+      this.hud.showNotification('Player left');
     });
 
     if (!net.isHost) net.send({ type: 'requestWorldState', id: net.myId });

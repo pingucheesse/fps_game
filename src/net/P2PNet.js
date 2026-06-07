@@ -20,8 +20,9 @@ export class P2PNet extends NetManager {
       this._peer = new Peer(code, { debug: 0 });
 
       this._peer.on('open', id => {
-        this.myId   = id;
-        this.isHost = true;
+        this.myId     = id;
+        this.roomCode = id; // peer ID == room code for the host
+        this.isHost   = true;
         this._peer.on('connection', conn => this._onIncomingConn(conn));
         resolve(code);
       });
