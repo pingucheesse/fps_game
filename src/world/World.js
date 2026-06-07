@@ -4,7 +4,6 @@ export class World {
   constructor(scene) {
     this._addLights(scene);
     this._addFloor(scene);
-    this._addCeiling(scene);
   }
 
   _addLights(scene) {
@@ -40,15 +39,5 @@ export class World {
     const grid = new THREE.GridHelper(50, 50, 0xbbbbbb, 0xcccccc);
     grid.position.y = 0.002;
     scene.add(grid);
-  }
-
-  _addCeiling(scene) {
-    const geo = new THREE.PlaneGeometry(14, 14);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.95, side: THREE.BackSide });
-    const ceil = new THREE.Mesh(geo, mat);
-    ceil.position.set(0, 3, 0);
-    ceil.rotation.x = Math.PI / 2;
-    ceil.receiveShadow = true;
-    scene.add(ceil);
   }
 }

@@ -10,22 +10,25 @@ export class Raycast {
     this._caster.far = 60;
   }
 
-  // Returns { wallId, point, rayDir } or null.  Also applies damage locally.
+  // Always returns { origin, rayDir, hit, wallId?, point? }.
+  // Applies wall damage locally when a wall is struck.
   fire(camera) {
     camera.getWorldPosition(_origin);
     camera.getWorldDirection(_direction);
     this._caster.set(_origin, _direction);
 
+    const origin = _origin.clone();
+    const rayDir = _direction.clone();
+
     const hits = this._caster.intersectObjects(this.wallManager.meshes, false);
-    if (hits.length === 0) return null;
+    if (hits.length === 0) return { origin, rayDir, hit: false };
 
-    const hit    = hits[0];
-    const wallId = hit.object.userData.wallId;
+    const h      = hits[0];
+    const wallId = h.object.userData.wallId;
     const wall   = this.wallManager.getById(wallId);
-    if (!wall) return null;
+    if (!wall) return { origin, rayDir, hit: false };
 
-    const rayDir = _direction.clone(); // normalised camera look direction
-    wall.applyHit(hit.point, rayDir);
-    return { wallId, point: hit.point, rayDir };
+    wall.applyHit(h.point, rayDir);
+    return { origin, rayDir, hit: true, wallId, point: h.point };
   }
 }

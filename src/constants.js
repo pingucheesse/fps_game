@@ -17,4 +17,4 @@ export const PLAYER_RADIUS = 0.3;  // m
 export const EYE_HEIGHT    = 1.6;  // m from feet
 
 // Network
-export const SYNC_MS = 33; // ~30 fps state broadcast
+export const SYNC_MS = 16; // ~60 fps state broadcast
