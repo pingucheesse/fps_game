@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Testing Ground</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+    #canvas { display: block; width: 100vw; height: 100vh; }
+
+    /* ── Menu overlay ── */
+    #menu {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(0, 0, 0, 0.88);
+      color: #fff;
+      z-index: 10;
+    }
+    #menu h1 {
+      font-size: 3.2rem; letter-spacing: 0.35em; text-transform: uppercase;
+      color: #eee; margin-bottom: 0.4rem; font-weight: 300;
+    }
+    .subtitle { color: #555; letter-spacing: 0.25em; font-size: 0.75rem; margin-bottom: 3rem; text-transform: uppercase; }
+
+    .btn {
+      background: #1a1a1a; color: #ccc; border: 1px solid #333;
+      padding: 0.7rem 2rem; margin: 0.3rem; cursor: pointer;
+      font-size: 0.85rem; letter-spacing: 0.12em; text-transform: uppercase;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      min-width: 200px; outline: none;
+    }
+    .btn:hover { background: #2a2a2a; border-color: #666; color: #fff; }
+    .btn:active { background: #333; }
+    .btn.primary { border-color: #888; color: #fff; }
+
+    /* panels */
+    .panel { display: none; flex-direction: column; align-items: center; gap: 0.5rem; margin-top: 1.5rem; }
+    .panel.visible { display: flex; }
+
+    .panel input[type=text] {
+      background: #111; color: #fff; border: 1px solid #333;
+      padding: 0.6rem 1rem; font-size: 1.1rem; text-align: center;
+      letter-spacing: 0.3em; width: 220px; outline: none; text-transform: uppercase;
+    }
+    .panel input[type=text]:focus { border-color: #666; }
+
+    #room-display, #lan-room-display {
+      font-size: 2rem; letter-spacing: 0.45em;
+      color: #fff; background: #111; padding: 0.5rem 1.5rem;
+      border: 1px solid #444; margin: 0.4rem 0; display: none;
+    }
+
+    #status, #lan-status {
+      color: #777; font-size: 0.8rem; min-height: 1.4em;
+      letter-spacing: 0.05em; margin-top: 0.2rem;
+    }
+
+    .btn-row { display: flex; gap: 0; }
+
+    .lan-rooms {
+      list-style: none; max-height: 100px; overflow-y: auto;
+      width: 240px; border: 1px solid #222; margin: 0.2rem 0;
+    }
+    .lan-rooms li {
+      padding: 0.4rem 0.8rem; cursor: pointer; background: #111;
+      border-bottom: 1px solid #222; font-size: 0.85rem; color: #aaa;
+    }
+    .lan-rooms li:hover { background: #222; color: #fff; }
+    .lan-rooms:empty { display: none; }
+
+    /* settings */
+    #settings {
+      margin-top: 2.5rem; display: flex; flex-direction: column;
+      gap: 0.6rem; align-items: center; border-top: 1px solid #222;
+      padding-top: 1.5rem; width: 280px;
+    }
+    .setting-row {
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%; color: #555; font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .setting-row input[type=range] { width: 120px; accent-color: #888; }
+    .setting-val { color: #888; min-width: 2.5em; text-align: right; }
+
+    /* ── HUD ── */
+    #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+
+    #crosshair {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 16px; height: 16px; display: none;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ''; position: absolute; background: rgba(255,255,255,0.85);
+    }
+    #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+    #crosshair::after  { height: 2px; width: 100%; top: 50%; transform: translateY(-50%); }
+
+    #peer-count {
+      position: absolute; top: 1rem; right: 1.2rem;
+      color: rgba(255,255,255,0.45); font-size: 0.72rem; letter-spacing: 0.08em;
+    }
+    #lock-hint {
+      position: absolute; bottom: 2rem; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.35); font-size: 0.75rem; letter-spacing: 0.1em;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <!-- ── MENU ── -->
+  <div id="menu">
+    <h1>Testing Ground</h1>
+    <p class="subtitle">Alpha Build</p>
+
+    <div id="main-buttons">
+      <button class="btn primary" id="btn-singleplayer">Singleplayer</button>
+      <button class="btn" id="btn-p2p">Play Online (P2P)</button>
+      <button class="btn" id="btn-lan">Play LAN</button>
+    </div>
+
+    <!-- P2P Panel -->
+    <div class="panel" id="p2p-panel">
+      <div class="btn-row">
+        <button class="btn" id="btn-p2p-create">Create Room</button>
+        <button class="btn" id="btn-p2p-join-mode">Join Room</button>
+      </div>
+      <div id="room-display"></div>
+      <input type="text" id="p2p-code-input" placeholder="ENTER CODE" maxlength="8" style="display:none">
+      <button class="btn" id="btn-p2p-connect" style="display:none">Connect</button>
+      <div id="status"></div>
+      <button class="btn primary" id="btn-start-p2p" style="display:none">Start Game →</button>
+      <button class="btn" id="btn-back-p2p" style="margin-top:0.8rem;font-size:0.75rem">← Back</button>
+    </div>
+
+    <!-- LAN Panel -->
+    <div class="panel" id="lan-panel">
+      <div class="btn-row">
+        <button class="btn" id="btn-lan-create">Create LAN Room</button>
+        <button class="btn" id="btn-lan-join-mode">Join LAN Room</button>
+      </div>
+      <ul class="lan-rooms" id="lan-rooms"></ul>
+      <div id="lan-room-display"></div>
+      <input type="text" id="lan-code-input" placeholder="ENTER CODE" maxlength="8" style="display:none">
+      <button class="btn" id="btn-lan-connect" style="display:none">Connect</button>
+      <div id="lan-status"></div>
+      <button class="btn primary" id="btn-start-lan" style="display:none">Start Game →</button>
+      <button class="btn" id="btn-back-lan" style="margin-top:0.8rem;font-size:0.75rem">← Back</button>
+    </div>
+
+    <!-- Settings -->
+    <div id="settings">
+      <div class="setting-row">
+        <span>Mouse Sensitivity</span>
+        <input type="range" id="sens-slider" min="1" max="10" value="5">
+        <span class="setting-val" id="sens-val">5</span>
+      </div>
+      <div class="setting-row">
+        <span>Field of View</span>
+        <input type="range" id="fov-slider" min="60" max="120" value="90">
+        <span class="setting-val" id="fov-val">90</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── HUD ── -->
+  <div id="hud">
+    <div id="crosshair"></div>
+    <div id="peer-count"></div>
+    <div id="lock-hint">Click to aim · WASD to move · LMB to shoot</div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
