@@ -41,7 +41,7 @@ export class Game {
     this.hud.setHealth(this.hp, this.armor);
 
     // Show room code at top of screen for the host
-    if (net?.isHost && net.roomCode) this.hud.setRoomCode(net.roomCode);
+    if (this.net?.isHost && this.net.roomCode) this.hud.setRoomCode(this.net.roomCode);
 
     this._animId   = null;
     this._syncAccum = 0; // ms accumulator for network sync (in-loop, no setInterval)
