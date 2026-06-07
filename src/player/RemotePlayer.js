@@ -11,12 +11,8 @@ const _matGrey  = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
 const _matDark  = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
 const _matBlack = new THREE.MeshLambertMaterial({ color: 0x080808 });
 
-// ── Body: capsule so top & bottom edges are rounded ──────────────────────────
-// Head radius = 0.27, head centre = EYE_HEIGHT (1.6m)
-// → head bottom = 1.6 - 0.27 = 1.33m  ← body top must end here, no higher
-// CapsuleGeometry(radius, length, capSegs, radialSegs)
-// total height = length + 2*radius  →  length = 1.33 - 2*0.3 = 0.73
-const BODY_TOTAL = 1.33;
+// ── Body ──────────────────────────────────────────────────────────────────────
+const BODY_TOTAL  = 1.33; // EYE_HEIGHT - headRadius
 const BODY_LENGTH = BODY_TOTAL - 2 * PLAYER_RADIUS; // 0.73
 
 function makeBody(mat) {
@@ -24,43 +20,35 @@ function makeBody(mat) {
     new THREE.CapsuleGeometry(PLAYER_RADIUS, BODY_LENGTH, 4, 10),
     mat
   );
-  // CapsuleGeometry is centred at 0; shift so bottom sits at y=0 (feet)
-  mesh.position.y = BODY_TOTAL / 2; // 0.665
+  mesh.position.y = BODY_TOTAL / 2; // centre capsule so bottom = y=0
   return mesh;
 }
 
-// ── Gun (same geometry as local player) ──────────────────────────────────────
-function makeGun() {
+// ── Pistol (matches Gun.js geometry) ─────────────────────────────────────────
+function makePistol() {
   const g = new THREE.Group();
 
-  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.052, 0.32), _matGrey));
+  const slide = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.040, 0.14), _matGrey);
+  slide.position.set(0, 0.006, -0.02);
+  g.add(slide);
 
-  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, 0.22), _matDark);
-  barrel.position.set(0, 0.016, -0.26);
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.013, 0.013, 0.06), _matDark);
+  barrel.position.set(0, 0.006, -0.12);
   g.add(barrel);
 
-  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.07, 0.11), _matDark);
-  stock.position.set(0, -0.018, 0.19);
-  g.add(stock);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.070, 0.055), _matDark);
+  grip.position.set(0, -0.033, 0.022);
+  g.add(grip);
 
-  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.08, 0.05), _matDark);
-  mag.position.set(0, -0.065, 0.02);
-  g.add(mag);
-
-  g.position.set(0.16, -0.13, -0.28); // camera-relative, same as LocalPlayer
+  // x=0.35 > body radius 0.3 → outside capsule; y=1.2 = shoulder/hand height; z=-0.15 forward
+  g.position.set(0.35, 1.2, -0.15);
   return g;
 }
 
 // ── Sunglasses ────────────────────────────────────────────────────────────────
-// Camera / pitchObj looks in -Z, so FRONT of head = -Z direction.
-// Head radius = 0.27 → place lenses at z = -0.30 (safely outside sphere).
-// No temples: they'd route back through the head and clip.
 function makeSunglasses() {
   const g = new THREE.Group();
 
-  // Verify lens corners clear the head sphere (radius 0.27):
-  //   lens centre (-0.085, 0.01, -0.30) → distance ≈ 0.31 > 0.27 ✓
-  //   far corner  (-0.135, 0.04, -0.30) → distance ≈ 0.33 > 0.27 ✓
   const lensGeo = new THREE.BoxGeometry(0.10, 0.06, 0.014);
 
   const ll = new THREE.Mesh(lensGeo, _matBlack);
@@ -71,13 +59,10 @@ function makeSunglasses() {
   rl.position.set(0.082, 0.01, -0.30);
   g.add(rl);
 
-  // Nose bridge connecting the two lenses
   const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.012, 0.010), _matBlack);
   bridge.position.set(0, 0.01, -0.302);
   g.add(bridge);
 
-  // Short temple stubs — only extend outward from the lens outer edge, not back
-  // through the head. Length kept small so they stay clear of the sphere.
   const templGeo = new THREE.BoxGeometry(0.008, 0.008, 0.06);
   const lt = new THREE.Mesh(templGeo, _matBlack);
   lt.position.set(-0.135, 0.01, -0.27);
@@ -98,21 +83,21 @@ export class RemotePlayer {
 
     const mat = new THREE.MeshLambertMaterial({ color: hashColor(peerId) });
 
-    // Root group — yaw applied here, world position set here
     this.group = new THREE.Group();
     this.group.add(makeBody(mat));
 
-    // Pitch object at eye height: head + sunglasses + gun all rotate with it
+    // Gun lives in the root group (body-level, yaw-only) — not in pitchObj
+    this._gun = makePistol();
+    this.group.add(this._gun);
+
+    // pitchObj: head + sunglasses only
     this._pitchObj = new THREE.Object3D();
     this._pitchObj.position.y = EYE_HEIGHT;
     this.group.add(this._pitchObj);
 
-    // Head sphere — centre exactly at EYE_HEIGHT, bottom just touches body top
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 10), mat);
     this._pitchObj.add(head);
-
     this._pitchObj.add(makeSunglasses());
-    this._pitchObj.add(makeGun());
 
     scene.add(this.group);
 
@@ -139,6 +124,8 @@ export class RemotePlayer {
     this.group.position.lerp(this._targetPos, t);
     this.group.rotation.y     += (this._targetYaw   - this.group.rotation.y)     * t;
     this._pitchObj.rotation.x += (this._targetPitch - this._pitchObj.rotation.x) * t;
+    // Gun follows yaw (via group) but only partially tracks pitch
+    this._gun.rotation.x += (this._targetPitch * 0.35 - this._gun.rotation.x) * t;
   }
 
   dispose(scene) {

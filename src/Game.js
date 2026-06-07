@@ -5,109 +5,135 @@ import { LocalPlayer } from './player/LocalPlayer.js';
 import { RemotePlayer } from './player/RemotePlayer.js';
 import { Raycast } from './weapons/Raycast.js';
 import { HUD } from './ui/HUD.js';
-import { SYNC_MS, EYE_HEIGHT, PLAYER_RADIUS } from './constants.js';
+import { SYNC_MS } from './constants.js';
+
+const MAX_HP    = 100;
+const MAX_ARMOR = 50;
+const BODY_DMG  = 20;
+const HEAD_DMG  = 40;
+
+// Safe in-room spawn points (room is 12×10m; dividers block z=0 outside x ±2)
+const SPAWNS = [
+  new THREE.Vector3(-3, 0,  3.5),
+  new THREE.Vector3( 3, 0,  3.5),
+  new THREE.Vector3(-3, 0, -3.5),
+  new THREE.Vector3( 3, 0, -3.5),
+];
 
 export class Game {
   constructor(renderer, netManager, settings = {}) {
     this.renderer = renderer;
-    this.net      = netManager; // null for singleplayer
+    this.net      = netManager;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x88bbdd);
     this.scene.fog = new THREE.FogExp2(0x88bbdd, 0.018);
 
-    this.world       = new World(this.scene);
-    this.wallManager = new WallManager(this.scene);
-    this.localPlayer = new LocalPlayer(this.scene, renderer.domElement, settings);
-    this.remotePlayers = new Map(); // peerId → RemotePlayer
+    this.world        = new World(this.scene);
+    this.wallManager  = new WallManager(this.scene);
+    this.localPlayer  = new LocalPlayer(this.scene, renderer.domElement, settings);
+    this.remotePlayers = new Map();
     this.raycast = new Raycast(this.wallManager);
     this.hud     = new HUD();
 
-    this._animId       = null;
-    this._syncInterval = null;
-    this._prevTime     = 0;
+    this.hp    = MAX_HP;
+    this.armor = MAX_ARMOR;
+    this.hud.setHealth(this.hp, this.armor);
+
+    this._animId   = null;
+    this._syncAccum = 0; // ms accumulator for network sync (in-loop, no setInterval)
+    this._prevTime = 0;
 
     this._bindInput();
     this._setupNet();
   }
 
-  // ── Shooting ──
+  // ── Shooting ──────────────────────────────────────────────────────────────
   _bindInput() {
     document.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
-      if (!this.localPlayer.isLocked) return;
+      if (e.button !== 0 || !this.localPlayer.isLocked) return;
       this._fire();
     });
   }
 
   _fire() {
-    const result = this.raycast.fire(this.localPlayer.camera);
+    const result = this.raycast.fire(this.localPlayer.camera, this.remotePlayers);
     this.localPlayer.gun.fire();
 
-    // Tracer end: actual hit point or 50m along ray
-    const tracerEnd = result.hit
-      ? result.point.clone()
-      : result.origin.clone().addScaledVector(result.rayDir, 50);
+    // Tracer end
+    let tracerEnd;
+    if (result.playerHit)  tracerEnd = result.hitPoint.clone();
+    else if (result.hit)   tracerEnd = result.point.clone();
+    else                   tracerEnd = result.origin.clone().addScaledVector(result.rayDir, 50);
 
-    this._spawnTracer(result.origin, tracerEnd);
+    const muzzlePos = new THREE.Vector3();
+    this.localPlayer.gun.muzzlePoint.getWorldPosition(muzzlePos);
+    this._spawnTracer(muzzlePos, tracerEnd);
 
     if (this.net) {
-      const msg = {
-        type: 'shoot',
-        origin: result.origin.toArray(),
-        end: tracerEnd.toArray(),
-      };
-      if (result.hit) {
+      // Network tracer origin: body-relative gun position matching remote visual
+      const GUN_OFFSET = new THREE.Vector3(0.35, 1.2, -0.15);
+      GUN_OFFSET.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.localPlayer.getYaw());
+      const netOrigin = this.localPlayer.getPosition().clone().add(GUN_OFFSET);
+
+      const msg = { type: 'shoot', origin: netOrigin.toArray(), end: tracerEnd.toArray() };
+
+      if (result.playerHit) {
+        // Shooter tells victim they were hit — no victim-side position check needed
+        msg.playerHit = true;
+        msg.targetId  = result.peerId;
+        msg.hitType   = result.hitType;
+      } else if (result.hit) {
         msg.wallId   = result.wallId;
         msg.hitPoint = result.point.toArray();
         msg.rayDir   = result.rayDir.toArray();
       }
+
       this.net.send(msg);
     }
   }
 
-  // Short-lived yellow tracer line
+  // ── Tracer ────────────────────────────────────────────────────────────────
   _spawnTracer(start, end) {
     const geo = new THREE.BufferGeometry().setFromPoints([start.clone(), end.clone()]);
-    const mat = new THREE.LineBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.9 });
+    const mat = new THREE.LineBasicMaterial({
+      color: 0xffee88, transparent: true, opacity: 0.9,
+      depthTest: false, depthWrite: false,
+    });
     const line = new THREE.Line(geo, mat);
     this.scene.add(line);
 
     const t0 = performance.now();
-    const DURATION = 120; // ms
-
     const tick = () => {
-      const elapsed = performance.now() - t0;
-      if (elapsed >= DURATION) {
-        this.scene.remove(line);
-        geo.dispose();
-        mat.dispose();
-        return;
-      }
-      mat.opacity = 0.9 * (1 - elapsed / DURATION);
+      const e = performance.now() - t0;
+      if (e >= 120) { this.scene.remove(line); geo.dispose(); mat.dispose(); return; }
+      mat.opacity = 0.9 * (1 - e / 120);
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
   }
 
-  // Check if a shot line from a remote player passed through local player
-  _checkLocalPlayerHit(origin, end) {
-    const playerPos = this.localPlayer.getPosition().clone();
-    playerPos.y += EYE_HEIGHT * 0.5; // aim at body centre
-
-    const AB = new THREE.Vector3().subVectors(end, origin);
-    const lenSq = AB.dot(AB);
-    if (lenSq === 0) return;
-    const AP = new THREE.Vector3().subVectors(playerPos, origin);
-    const t  = Math.max(0, Math.min(1, AP.dot(AB) / lenSq));
-    const closest = origin.clone().addScaledVector(AB, t);
-
-    if (closest.distanceTo(playerPos) < PLAYER_RADIUS + 0.15) {
-      this.hud.showHitFlash();
+  // ── Damage / respawn ──────────────────────────────────────────────────────
+  _takeDamage(rawDmg) {
+    let dmg = rawDmg;
+    if (this.armor > 0) {
+      const blocked = dmg * 0.5;
+      this.armor = Math.max(0, this.armor - blocked);
+      dmg -= blocked;
     }
+    this.hp = Math.max(0, this.hp - dmg);
+    this.hud.setHealth(this.hp, this.armor);
+    if (this.hp <= 0) this._respawn();
   }
 
-  // ── Network event wiring ──
+  _respawn() {
+    this.hp    = MAX_HP;
+    this.armor = MAX_ARMOR;
+    this.localPlayer.respawn(SPAWNS[Math.floor(Math.random() * SPAWNS.length)]);
+    this.hud.setHealth(this.hp, this.armor);
+  }
+
+  // ── Network ───────────────────────────────────────────────────────────────
   _setupNet() {
     const net = this.net;
     if (!net) return;
@@ -115,21 +141,20 @@ export class Game {
     net.on('playerState', (msg) => {
       if (msg.id === net.myId) return;
       let rp = this.remotePlayers.get(msg.id);
-      if (!rp) {
-        rp = new RemotePlayer(this.scene, msg.id);
-        this.remotePlayers.set(msg.id, rp);
-      }
+      if (!rp) { rp = new RemotePlayer(this.scene, msg.id); this.remotePlayers.set(msg.id, rp); }
       rp.updateState(msg);
     });
 
     net.on('shoot', (msg) => {
-      if (msg._from === net.myId) return; // ignore relayed copies of own shots
+      if (msg._from === net.myId) return;
 
-      const origin = new THREE.Vector3().fromArray(msg.origin);
-      const end    = new THREE.Vector3().fromArray(msg.end);
+      // Show tracer from remote shooter's gun
+      this._spawnTracer(
+        new THREE.Vector3().fromArray(msg.origin),
+        new THREE.Vector3().fromArray(msg.end)
+      );
 
-      this._spawnTracer(origin, end);
-
+      // Apply wall damage
       if (msg.wallId) {
         const wall = this.wallManager.getById(msg.wallId);
         if (wall) wall.applyHit(
@@ -138,7 +163,11 @@ export class Game {
         );
       }
 
-      this._checkLocalPlayerHit(origin, end);
+      // Shooter-determined player hit — apply if we are the target
+      if (msg.playerHit && msg.targetId === net.myId) {
+        this.hud.showHitFlash();
+        this._takeDamage(msg.hitType === 'head' ? HEAD_DMG : BODY_DMG);
+      }
     });
 
     net.on('worldState', (msg) => {
@@ -155,13 +184,7 @@ export class Game {
 
     net.on('newPeer', (msg) => {
       this.hud.setPeerCount(net.peerCount);
-      if (net.isHost) {
-        net.sendTo(msg.id, {
-          type: 'worldState',
-          walls: this.wallManager.serialize(),
-          players: [],
-        });
-      }
+      if (net.isHost) net.sendTo(msg.id, { type: 'worldState', walls: this.wallManager.serialize(), players: [] });
     });
 
     net.on('peerLeft', (msg) => {
@@ -170,31 +193,15 @@ export class Game {
       this.hud.setPeerCount(net.peerCount);
     });
 
-    if (!net.isHost) {
-      net.send({ type: 'requestWorldState', id: net.myId });
-    }
+    if (!net.isHost) net.send({ type: 'requestWorldState', id: net.myId });
 
     net.on('requestWorldState', (msg) => {
       if (!net.isHost) return;
-      net.sendTo(msg._from || msg.id, {
-        type: 'worldState',
-        walls: this.wallManager.serialize(),
-        players: [],
-      });
+      net.sendTo(msg._from || msg.id, { type: 'worldState', walls: this.wallManager.serialize(), players: [] });
     });
-
-    this._syncInterval = setInterval(() => {
-      net.send({
-        type: 'playerState',
-        id: net.myId,
-        pos: this.localPlayer.getPosition().toArray(),
-        yaw: this.localPlayer.getYaw(),
-        pitch: this.localPlayer.getPitch(),
-      });
-    }, SYNC_MS);
   }
 
-  // ── Game loop ──
+  // ── Loop ──────────────────────────────────────────────────────────────────
   start() {
     this._prevTime = performance.now();
     this._loop();
@@ -210,12 +217,25 @@ export class Game {
     for (const rp of this.remotePlayers.values()) rp.update(dt);
     this.hud.update(dt);
 
+    // Position sync tied to render loop — avoids setInterval/rAF timer conflicts
+    if (this.net) {
+      this._syncAccum += dt * 1000;
+      if (this._syncAccum >= SYNC_MS) {
+        this._syncAccum -= SYNC_MS;
+        this.net.send({
+          type: 'playerState', id: this.net.myId,
+          pos:   this.localPlayer.getPosition().toArray(),
+          yaw:   this.localPlayer.getYaw(),
+          pitch: this.localPlayer.getPitch(),
+        });
+      }
+    }
+
     this.renderer.render(this.scene, this.localPlayer.camera);
   }
 
   dispose() {
     cancelAnimationFrame(this._animId);
-    clearInterval(this._syncInterval);
     if (this.net) this.net.disconnect();
   }
 }

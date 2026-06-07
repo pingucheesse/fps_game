@@ -37,4 +37,10 @@ export class LocalPlayer {
   getPosition() { return this.yawObj.position.clone(); }
   getYaw()      { return this.yawObj.rotation.y; }
   getPitch()    { return this.pitchObj.rotation.x; }
+
+  respawn(pos) {
+    this.yawObj.position.set(pos.x, 0, pos.z);
+    this.controller.velocityY = 0;
+    this.controller.onGround  = true;
+  }
 }

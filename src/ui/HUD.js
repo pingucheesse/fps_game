@@ -1,14 +1,31 @@
 export class HUD {
   constructor() {
-    this._peerEl = document.getElementById('peer-count');
-    this._hitEl  = document.getElementById('hit-flash');
-    this._hitAlpha = 0;
+    this._peerEl   = document.getElementById('peer-count');
+    this._hitEl    = document.getElementById('hit-flash');
+    this._hpFill   = document.getElementById('hp-fill');
+    this._hpNum    = document.getElementById('hp-num');
+    this._armorFill = document.getElementById('armor-fill');
+    this._armorNum  = document.getElementById('armor-num');
+    this._armorRow  = document.getElementById('armor-row');
+    this._hitAlpha  = 0;
   }
 
   setPeerCount(n) {
-    if (this._peerEl) {
-      this._peerEl.textContent = n > 0 ? `● ${n + 1} players` : '';
-    }
+    if (this._peerEl) this._peerEl.textContent = n > 0 ? `● ${n + 1} players` : '';
+  }
+
+  setHealth(hp, armor) {
+    if (!this._hpFill) return;
+    const hpPct = Math.max(0, hp / 100);
+    this._hpFill.style.width = (hpPct * 100) + '%';
+    this._hpNum.textContent  = Math.ceil(hp);
+    this._hpFill.style.background =
+      hpPct > 0.6 ? '#4caf50' : hpPct > 0.3 ? '#f5a623' : '#e53935';
+
+    const armorPct = Math.max(0, armor / 50);
+    this._armorFill.style.width = (armorPct * 100) + '%';
+    this._armorNum.textContent  = Math.ceil(armor);
+    this._armorRow.style.opacity = armor > 0 ? '1' : '0.35';
   }
 
   showHitFlash() {
@@ -16,10 +33,9 @@ export class HUD {
     if (this._hitEl) this._hitEl.style.opacity = '1';
   }
 
-  // Call once per frame with dt in seconds
   update(dt) {
     if (this._hitAlpha <= 0) return;
-    this._hitAlpha = Math.max(0, this._hitAlpha - dt * 1.6); // ~0.6s fade
+    this._hitAlpha = Math.max(0, this._hitAlpha - dt * 1.6);
     if (this._hitEl) this._hitEl.style.opacity = this._hitAlpha.toFixed(3);
   }
 }
