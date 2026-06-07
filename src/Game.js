@@ -43,9 +43,10 @@ export class Game {
     // Show room code at top of screen for the host
     if (this.net?.isHost && this.net.roomCode) this.hud.setRoomCode(this.net.roomCode);
 
-    this._animId   = null;
-    this._syncAccum = 0; // ms accumulator for network sync (in-loop, no setInterval)
-    this._prevTime = 0;
+    this._animId    = null;
+    this._syncAccum = 0;
+    this._prevTime  = 0;
+    this._particles = []; // active spark particles
 
     this._bindInput();
     this._setupNet();
@@ -73,6 +74,12 @@ export class Game {
     this.localPlayer.gun.muzzlePoint.getWorldPosition(muzzlePos);
     this._spawnTracer(muzzlePos, tracerEnd);
 
+    if (result.playerHit) {
+      const hs = result.hitType === 'head';
+      this.hud.showHitMarker(hs);
+      this._spawnSparks(result.hitPoint, hs);
+    }
+
     if (this.net) {
       // Network tracer origin: body-relative gun position matching remote visual
       const GUN_OFFSET = new THREE.Vector3(0.35, 1.2, -0.15);
@@ -82,7 +89,6 @@ export class Game {
       const msg = { type: 'shoot', origin: netOrigin.toArray(), end: tracerEnd.toArray() };
 
       if (result.playerHit) {
-        // Shooter tells victim they were hit — no victim-side position check needed
         msg.playerHit = true;
         msg.targetId  = result.peerId;
         msg.hitType   = result.hitType;
@@ -114,6 +120,64 @@ export class Game {
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
+  }
+
+  // ── Sparks ────────────────────────────────────────────────────────────────
+  _spawnSparks(position, isHeadshot) {
+    const count = isHeadshot ? 10 : 6;
+    const base  = isHeadshot ? 0.038 : 0.022;
+
+    for (let i = 0; i < count; i++) {
+      const s   = base * (0.7 + Math.random() * 0.6);
+      const geo = new THREE.BoxGeometry(s * 2.8, s * 0.32, s * 0.32);
+      const mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color().setHSL(0.06 + Math.random() * 0.07, 1, 0.52 + Math.random() * 0.22),
+        transparent: true, opacity: 1, depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(position);
+
+      const theta  = Math.random() * Math.PI * 2;
+      const hSpd   = 1.8 + Math.random() * 2.8;
+      const upBias = isHeadshot ? 3.8 : 0.9;
+
+      this._particles.push({
+        mesh,
+        vel: new THREE.Vector3(
+          Math.cos(theta) * hSpd,
+          Math.random() * 1.5 + upBias,
+          Math.sin(theta) * hSpd
+        ),
+        rotV: new THREE.Vector3(
+          (Math.random() - 0.5) * 14,
+          (Math.random() - 0.5) * 14,
+          (Math.random() - 0.5) * 14
+        ),
+        age: 0,
+        maxAge: 0.36 + Math.random() * 0.22,
+      });
+      this.scene.add(mesh);
+    }
+  }
+
+  _updateParticles(dt) {
+    for (let i = this._particles.length - 1; i >= 0; i--) {
+      const p = this._particles[i];
+      p.age += dt;
+      if (p.age >= p.maxAge) {
+        this.scene.remove(p.mesh);
+        p.mesh.geometry.dispose();
+        p.mesh.material.dispose();
+        this._particles.splice(i, 1);
+        continue;
+      }
+      p.vel.y -= 9.8 * dt;
+      p.mesh.position.addScaledVector(p.vel, dt);
+      p.mesh.rotation.x += p.rotV.x * dt;
+      p.mesh.rotation.y += p.rotV.y * dt;
+      p.mesh.rotation.z += p.rotV.z * dt;
+      p.mesh.material.opacity = 1 - p.age / p.maxAge;
+    }
   }
 
   // ── Damage / respawn ──────────────────────────────────────────────────────
@@ -220,6 +284,7 @@ export class Game {
 
     this.localPlayer.update(dt, this.wallManager);
     for (const rp of this.remotePlayers.values()) rp.update(dt);
+    this._updateParticles(dt);
     this.hud.update(dt);
 
     // Position sync tied to render loop — avoids setInterval/rAF timer conflicts

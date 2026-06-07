@@ -105,6 +105,23 @@
       color: rgba(255,255,255,0.35); font-size: 0.75rem; letter-spacing: 0.1em;
     }
 
+    /* ── Hit marker ── */
+    #hit-marker {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 24px; height: 24px;
+      opacity: 0; transition: opacity 0.12s ease-out;
+      pointer-events: none; z-index: 6; display: none;
+    }
+    .hm {
+      position: absolute; width: 7px; height: 2px;
+      border-radius: 1px; background: rgba(255, 50, 50, 0.92);
+    }
+    .hm-tl { top: 4px; left: 3px;  transform: rotate(-45deg); }
+    .hm-tr { top: 4px; right: 3px; transform: rotate( 45deg); }
+    .hm-bl { bottom: 4px; left: 3px;  transform: rotate( 45deg); }
+    .hm-br { bottom: 4px; right: 3px; transform: rotate(-45deg); }
+
     /* ── Room code (host only) ── */
     #room-code-hud {
       position: absolute; top: 0.75rem; left: 50%; transform: translateX(-50%);
@@ -216,6 +233,12 @@
   <!-- ── HUD ── -->
   <div id="hud">
     <div id="hit-flash"></div>
+    <div id="hit-marker">
+      <div class="hm hm-tl"></div>
+      <div class="hm hm-tr"></div>
+      <div class="hm hm-bl"></div>
+      <div class="hm hm-br"></div>
+    </div>
     <div id="room-code-hud"></div>
     <div id="notification"></div>
     <div id="crosshair"></div>

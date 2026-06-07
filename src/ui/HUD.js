@@ -7,10 +7,12 @@ export class HUD {
     this._armorFill = document.getElementById('armor-fill');
     this._armorNum  = document.getElementById('armor-num');
     this._armorRow  = document.getElementById('armor-row');
-    this._roomEl    = document.getElementById('room-code-hud');
-    this._notifEl   = document.getElementById('notification');
-    this._hitAlpha  = 0;
-    this._notifTimer = null;
+    this._roomEl      = document.getElementById('room-code-hud');
+    this._notifEl     = document.getElementById('notification');
+    this._hitMarkerEl = document.getElementById('hit-marker');
+    this._hitAlpha    = 0;
+    this._notifTimer  = null;
+    this._hmTimer     = null;
   }
 
   setPeerCount(n) {
@@ -47,6 +49,19 @@ export class HUD {
     this._notifTimer = setTimeout(() => {
       if (this._notifEl) this._notifEl.style.opacity = '0';
     }, 3000);
+  }
+
+  // Hit marker — X on crosshair; gold for headshot, red for body
+  showHitMarker(isHeadshot) {
+    if (!this._hitMarkerEl) return;
+    const color = isHeadshot ? 'rgba(255, 210, 40, 0.95)' : 'rgba(255, 50, 50, 0.92)';
+    this._hitMarkerEl.querySelectorAll('.hm').forEach(el => el.style.background = color);
+    this._hitMarkerEl.style.display = 'block';
+    this._hitMarkerEl.style.opacity = '1';
+    clearTimeout(this._hmTimer);
+    this._hmTimer = setTimeout(() => {
+      if (this._hitMarkerEl) this._hitMarkerEl.style.opacity = '0';
+    }, 220);
   }
 
   showHitFlash() {
