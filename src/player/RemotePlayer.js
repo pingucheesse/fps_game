@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PLAYER_HEIGHT, PLAYER_RADIUS, EYE_HEIGHT } from '../constants.js';
+import { PLAYER_RADIUS, EYE_HEIGHT } from '../constants.js';
 
 function hashColor(id) {
   let h = 0;
@@ -7,15 +7,33 @@ function hashColor(id) {
   return new THREE.Color().setHSL((h % 360) / 360, 0.65, 0.55);
 }
 
-const _matGrey = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
-const _matDark = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+const _matGrey  = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+const _matDark  = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
 const _matBlack = new THREE.MeshLambertMaterial({ color: 0x080808 });
 
+// ── Body: capsule so top & bottom edges are rounded ──────────────────────────
+// Head radius = 0.27, head centre = EYE_HEIGHT (1.6m)
+// → head bottom = 1.6 - 0.27 = 1.33m  ← body top must end here, no higher
+// CapsuleGeometry(radius, length, capSegs, radialSegs)
+// total height = length + 2*radius  →  length = 1.33 - 2*0.3 = 0.73
+const BODY_TOTAL = 1.33;
+const BODY_LENGTH = BODY_TOTAL - 2 * PLAYER_RADIUS; // 0.73
+
+function makeBody(mat) {
+  const mesh = new THREE.Mesh(
+    new THREE.CapsuleGeometry(PLAYER_RADIUS, BODY_LENGTH, 4, 10),
+    mat
+  );
+  // CapsuleGeometry is centred at 0; shift so bottom sits at y=0 (feet)
+  mesh.position.y = BODY_TOTAL / 2; // 0.665
+  return mesh;
+}
+
+// ── Gun (same geometry as local player) ──────────────────────────────────────
 function makeGun() {
   const g = new THREE.Group();
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.052, 0.32), _matGrey);
-  g.add(body);
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.052, 0.32), _matGrey));
 
   const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, 0.22), _matDark);
   barrel.position.set(0, 0.016, -0.26);
@@ -29,72 +47,71 @@ function makeGun() {
   mag.position.set(0, -0.065, 0.02);
   g.add(mag);
 
-  // Same camera-relative offset as the local player's gun
-  g.position.set(0.16, -0.13, -0.28);
+  g.position.set(0.16, -0.13, -0.28); // camera-relative, same as LocalPlayer
   return g;
 }
 
+// ── Sunglasses ────────────────────────────────────────────────────────────────
+// Camera / pitchObj looks in -Z, so FRONT of head = -Z direction.
+// Head radius = 0.27 → place lenses at z = -0.30 (safely outside sphere).
+// No temples: they'd route back through the head and clip.
 function makeSunglasses() {
   const g = new THREE.Group();
 
-  // Lenses
-  const ll = new THREE.Mesh(new THREE.BoxGeometry(0.105, 0.065, 0.012), _matBlack);
-  ll.position.set(-0.085, 0.01, 0.255);
+  // Verify lens corners clear the head sphere (radius 0.27):
+  //   lens centre (-0.085, 0.01, -0.30) → distance ≈ 0.31 > 0.27 ✓
+  //   far corner  (-0.135, 0.04, -0.30) → distance ≈ 0.33 > 0.27 ✓
+  const lensGeo = new THREE.BoxGeometry(0.10, 0.06, 0.014);
+
+  const ll = new THREE.Mesh(lensGeo, _matBlack);
+  ll.position.set(-0.082, 0.01, -0.30);
   g.add(ll);
 
-  const rl = new THREE.Mesh(new THREE.BoxGeometry(0.105, 0.065, 0.012), _matBlack);
-  rl.position.set(0.085, 0.01, 0.255);
+  const rl = new THREE.Mesh(lensGeo, _matBlack);
+  rl.position.set(0.082, 0.01, -0.30);
   g.add(rl);
 
-  // Bridge
-  const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.012, 0.008), _matBlack);
-  bridge.position.set(0, 0.01, 0.257);
+  // Nose bridge connecting the two lenses
+  const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.012, 0.010), _matBlack);
+  bridge.position.set(0, 0.01, -0.302);
   g.add(bridge);
 
-  // Temples (arms going to ears)
-  const lt = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.008, 0.175), _matBlack);
-  lt.position.set(-0.14, 0.01, 0.17);
+  // Short temple stubs — only extend outward from the lens outer edge, not back
+  // through the head. Length kept small so they stay clear of the sphere.
+  const templGeo = new THREE.BoxGeometry(0.008, 0.008, 0.06);
+  const lt = new THREE.Mesh(templGeo, _matBlack);
+  lt.position.set(-0.135, 0.01, -0.27);
   g.add(lt);
 
-  const rt = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.008, 0.175), _matBlack);
-  rt.position.set(0.14, 0.01, 0.17);
+  const rt = new THREE.Mesh(templGeo, _matBlack);
+  rt.position.set(0.135, 0.01, -0.27);
   g.add(rt);
 
   return g;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+
 export class RemotePlayer {
   constructor(scene, peerId) {
     this.peerId = peerId;
 
-    const color = hashColor(peerId);
-    const mat = new THREE.MeshLambertMaterial({ color });
+    const mat = new THREE.MeshLambertMaterial({ color: hashColor(peerId) });
 
-    // Root group — yaw rotation applied here, position set here
+    // Root group — yaw applied here, world position set here
     this.group = new THREE.Group();
+    this.group.add(makeBody(mat));
 
-    // Body cylinder (feet → PLAYER_HEIGHT)
-    const body = new THREE.Mesh(
-      new THREE.CylinderGeometry(PLAYER_RADIUS, PLAYER_RADIUS, PLAYER_HEIGHT, 10),
-      mat
-    );
-    body.position.y = PLAYER_HEIGHT / 2;
-    this.group.add(body);
-
-    // Pitch object at eye height — head, sunglasses, and gun all live here
-    // so they all rotate together with vertical look direction
+    // Pitch object at eye height: head + sunglasses + gun all rotate with it
     this._pitchObj = new THREE.Object3D();
     this._pitchObj.position.y = EYE_HEIGHT;
     this.group.add(this._pitchObj);
 
-    // Head sphere at eye-height origin
+    // Head sphere — centre exactly at EYE_HEIGHT, bottom just touches body top
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 10), mat);
     this._pitchObj.add(head);
 
-    // Sunglasses parented to pitch object (rotate with head)
     this._pitchObj.add(makeSunglasses());
-
-    // Gun parented to pitch object (rotates with look direction)
     this._pitchObj.add(makeGun());
 
     scene.add(this.group);
@@ -120,15 +137,12 @@ export class RemotePlayer {
   update() {
     const t = 0.18;
     this.group.position.lerp(this._targetPos, t);
-    this.group.rotation.y      += (this._targetYaw   - this.group.rotation.y)      * t;
-    this._pitchObj.rotation.x  += (this._targetPitch - this._pitchObj.rotation.x)  * t;
+    this.group.rotation.y     += (this._targetYaw   - this.group.rotation.y)     * t;
+    this._pitchObj.rotation.x += (this._targetPitch - this._pitchObj.rotation.x) * t;
   }
 
   dispose(scene) {
     scene.remove(this.group);
-    this.group.traverse(o => {
-      if (o.geometry) o.geometry.dispose();
-      // shared materials (_matGrey etc.) — don't dispose
-    });
+    this.group.traverse(o => { if (o.geometry) o.geometry.dispose(); });
   }
 }
