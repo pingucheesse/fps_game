@@ -11,8 +11,12 @@ const MAX_HP    = 100;
 const MAX_ARMOR = 50;
 const BODY_DMG  = 20;
 const HEAD_DMG  = 40;
+const KNIFE_DMG = 60;
+const KNIFE_RANGE = 1.5; // metres
 
-// Safe spawn points spread around the expanded 20×16 m room
+// Knife wall-damage overrides — big area, heavy hit
+const KNIFE_WALL = { sigma: 0.30, strength: 2.8, maxDisplace: 0.004 };
+
 const SPAWNS = [
   new THREE.Vector3(-7, 0,  6),
   new THREE.Vector3( 7, 0,  6),
@@ -38,6 +42,9 @@ export class Game {
     this.raycast = new Raycast(this.wallManager);
     this.hud     = new HUD();
 
+    this._meleeRaycaster = new THREE.Raycaster();
+    this._meleeRaycaster.far = KNIFE_RANGE;
+
     this.hp    = MAX_HP;
     this.armor = MAX_ARMOR;
     this.hud.setHealth(this.hp, this.armor);
@@ -53,14 +60,21 @@ export class Game {
     this._setupNet();
   }
 
-  // ── Shooting ──────────────────────────────────────────────────────────────
+  // ── Input ─────────────────────────────────────────────────────────────────
   _bindInput() {
     document.addEventListener('mousedown', (e) => {
       if (e.button !== 0 || !this.localPlayer.isLocked) return;
-      this._fire();
+      if (this.localPlayer.isKnifeMode) this._stab();
+      else this._fire();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.repeat || !this.localPlayer.isLocked) return;
+      if (e.code === 'KeyV') this.localPlayer.toggleKnife();
     });
   }
 
+  // ── Gun fire ──────────────────────────────────────────────────────────────
   _fire() {
     const result = this.raycast.fire(this.localPlayer.camera, this.remotePlayers);
     this.localPlayer.gun.fire();
@@ -80,7 +94,6 @@ export class Game {
       this._spawnSparks(result.hitPoint, hs);
     }
 
-    // Concrete chip particles on local shot
     if (result.hit) {
       const wall = this.wallManager.getById(result.wallId);
       if (wall?.type === 'concrete') this._spawnChips(result.point);
@@ -90,7 +103,6 @@ export class Game {
       const GUN_OFFSET = new THREE.Vector3(0.35, 1.2, -0.15);
       GUN_OFFSET.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.localPlayer.getYaw());
       const netOrigin = this.localPlayer.getPosition().clone().add(GUN_OFFSET);
-
       const msg = { type: 'shoot', origin: netOrigin.toArray(), end: tracerEnd.toArray() };
 
       if (result.playerHit) {
@@ -102,8 +114,61 @@ export class Game {
         msg.hitPoint = result.point.toArray();
         msg.rayDir   = result.rayDir.toArray();
       }
-
       this.net.send(msg);
+    }
+  }
+
+  // ── Knife stab ────────────────────────────────────────────────────────────
+  _stab() {
+    this.localPlayer.knife.stab();
+
+    const camera = this.localPlayer.camera;
+    const origin = new THREE.Vector3();
+    const dir    = new THREE.Vector3();
+    camera.getWorldPosition(origin);
+    camera.getWorldDirection(dir);
+
+    this._meleeRaycaster.set(origin, dir);
+
+    // Player hit (melee range)
+    let hitPlayer = false;
+    for (const [peerId, rp] of this.remotePlayers) {
+      const res = this.raycast._playerHit(origin, dir, rp.group.position, KNIFE_RANGE, rp._crouching);
+      if (res) {
+        this.hud.showHitMarker(false);
+        this._spawnSparks(res.point, false);
+        if (this.net) {
+          this.net.send({
+            type: 'shoot', playerHit: true,
+            targetId: peerId, hitType: 'body',
+            knifeDmg: KNIFE_DMG,
+            origin: origin.toArray(), end: res.point.toArray(),
+          });
+        }
+        hitPlayer = true;
+        break;
+      }
+    }
+
+    if (!hitPlayer) {
+      // Wall hit (melee range, large-area knife damage)
+      const hits = this._meleeRaycaster.intersectObjects(this.wallManager.meshes, false);
+      if (hits.length > 0) {
+        const h      = hits[0];
+        const wallId = h.object.userData.wallId;
+        const wall   = this.wallManager.getById(wallId);
+        if (wall) {
+          wall.applyHit(h.point, dir, KNIFE_WALL);
+          if (this.net) {
+            this.net.send({
+              type: 'shoot',
+              wallId, hitPoint: h.point.toArray(), rayDir: dir.toArray(),
+              knifeHit: true,
+              origin: origin.toArray(), end: h.point.toArray(),
+            });
+          }
+        }
+      }
     }
   }
 
@@ -127,7 +192,7 @@ export class Game {
     requestAnimationFrame(tick);
   }
 
-  // ── Hit sparks (player hits) ──────────────────────────────────────────────
+  // ── Sparks (player hits) ──────────────────────────────────────────────────
   _spawnSparks(position, isHeadshot) {
     const count = isHeadshot ? 10 : 6;
     const base  = isHeadshot ? 0.038 : 0.022;
@@ -167,12 +232,12 @@ export class Game {
 
   // ── Concrete chip debris ──────────────────────────────────────────────────
   _spawnChips(position) {
-    const count = 5 + Math.floor(Math.random() * 5); // 5-9 chips
+    const count = 5 + Math.floor(Math.random() * 5);
     for (let i = 0; i < count; i++) {
-      const s   = 0.018 + Math.random() * 0.032;
+      const s   = 0.018 + Math.random() * 0.030;
       const geo = new THREE.BoxGeometry(s * (1.2 + Math.random()), s, s * (1.2 + Math.random()));
       const mat = new THREE.MeshBasicMaterial({
-        color: new THREE.Color().setHSL(0, 0, 0.38 + Math.random() * 0.28),
+        color: new THREE.Color().setHSL(0, 0, 0.36 + Math.random() * 0.28),
         transparent: true, opacity: 1, depthWrite: false,
       });
       const mesh = new THREE.Mesh(geo, mat);
@@ -263,11 +328,12 @@ export class Game {
       if (msg.wallId) {
         const wall = this.wallManager.getById(msg.wallId);
         if (wall) {
+          const overrides = msg.knifeHit ? KNIFE_WALL : {};
           wall.applyHit(
             new THREE.Vector3().fromArray(msg.hitPoint),
-            new THREE.Vector3().fromArray(msg.rayDir)
+            new THREE.Vector3().fromArray(msg.rayDir),
+            overrides
           );
-          // Concrete chips visible to all clients
           if (wall.type === 'concrete') {
             this._spawnChips(new THREE.Vector3().fromArray(msg.hitPoint));
           }
@@ -276,7 +342,8 @@ export class Game {
 
       if (msg.playerHit && msg.targetId === net.myId) {
         this.hud.showHitFlash();
-        this._takeDamage(msg.hitType === 'head' ? HEAD_DMG : BODY_DMG);
+        const dmg = msg.knifeDmg ?? (msg.hitType === 'head' ? HEAD_DMG : BODY_DMG);
+        this._takeDamage(dmg);
       }
     });
 

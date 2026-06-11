@@ -40,6 +40,9 @@ export class Gun {
     this._flashTimer = 0;
   }
 
+  get visible()  { return this._group.visible; }
+  set visible(v) { this._group.visible = v; }
+
   fire() {
     this._flash.intensity = 4;
     this._flashTimer = 0.055;

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PlayerController } from './PlayerController.js';
 import { Gun } from '../weapons/Gun.js';
+import { Knife } from '../weapons/Knife.js';
 import { EYE_HEIGHT, CROUCH_EYE_HEIGHT } from '../constants.js';
 
 export class LocalPlayer {
@@ -23,15 +24,25 @@ export class LocalPlayer {
     });
 
     this.gun        = new Gun(this.camera);
+    this.knife      = new Knife(this.camera);
+    this._knifeMode = false;
     this.controller = new PlayerController(canvas, this.yawObj, this.pitchObj, settings);
   }
 
   get isLocked()    { return this.controller.isLocked; }
   get isCrouching() { return this.controller.isCrouching; }
+  get isKnifeMode() { return this._knifeMode; }
+
+  toggleKnife() {
+    this._knifeMode  = !this._knifeMode;
+    this.gun.visible   = !this._knifeMode;
+    this.knife.visible =  this._knifeMode;
+  }
 
   update(dt, wallManager) {
     this.controller.update(dt, wallManager);
     this.gun.update(dt);
+    this.knife.update(dt);
 
     // Smoothly lower / raise camera to match crouch state
     const targetY = this.isCrouching ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
