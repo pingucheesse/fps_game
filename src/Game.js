@@ -12,12 +12,14 @@ const MAX_ARMOR = 50;
 const BODY_DMG  = 20;
 const HEAD_DMG  = 40;
 
-// Safe in-room spawn points (room is 12×10m; dividers block z=0 outside x ±2)
+// Safe spawn points spread around the expanded 20×16 m room
 const SPAWNS = [
-  new THREE.Vector3(-3, 0,  3.5),
-  new THREE.Vector3( 3, 0,  3.5),
-  new THREE.Vector3(-3, 0, -3.5),
-  new THREE.Vector3( 3, 0, -3.5),
+  new THREE.Vector3(-7, 0,  6),
+  new THREE.Vector3( 7, 0,  6),
+  new THREE.Vector3(-7, 0, -6),
+  new THREE.Vector3( 7, 0, -6),
+  new THREE.Vector3( 0, 0,  7),
+  new THREE.Vector3( 0, 0, -7),
 ];
 
 export class Game {
@@ -27,7 +29,7 @@ export class Game {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x88bbdd);
-    this.scene.fog = new THREE.FogExp2(0x88bbdd, 0.018);
+    this.scene.fog = new THREE.FogExp2(0x88bbdd, 0.014);
 
     this.world        = new World(this.scene);
     this.wallManager  = new WallManager(this.scene);
@@ -40,13 +42,12 @@ export class Game {
     this.armor = MAX_ARMOR;
     this.hud.setHealth(this.hp, this.armor);
 
-    // Show room code at top of screen for the host
     if (this.net?.isHost && this.net.roomCode) this.hud.setRoomCode(this.net.roomCode);
 
     this._animId    = null;
     this._syncAccum = 0;
     this._prevTime  = 0;
-    this._particles = []; // active spark particles
+    this._particles = [];
 
     this._bindInput();
     this._setupNet();
@@ -64,7 +65,6 @@ export class Game {
     const result = this.raycast.fire(this.localPlayer.camera, this.remotePlayers);
     this.localPlayer.gun.fire();
 
-    // Tracer end
     let tracerEnd;
     if (result.playerHit)  tracerEnd = result.hitPoint.clone();
     else if (result.hit)   tracerEnd = result.point.clone();
@@ -80,8 +80,13 @@ export class Game {
       this._spawnSparks(result.hitPoint, hs);
     }
 
+    // Concrete chip particles on local shot
+    if (result.hit) {
+      const wall = this.wallManager.getById(result.wallId);
+      if (wall?.type === 'concrete') this._spawnChips(result.point);
+    }
+
     if (this.net) {
-      // Network tracer origin: body-relative gun position matching remote visual
       const GUN_OFFSET = new THREE.Vector3(0.35, 1.2, -0.15);
       GUN_OFFSET.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.localPlayer.getYaw());
       const netOrigin = this.localPlayer.getPosition().clone().add(GUN_OFFSET);
@@ -122,7 +127,7 @@ export class Game {
     requestAnimationFrame(tick);
   }
 
-  // ── Sparks ────────────────────────────────────────────────────────────────
+  // ── Hit sparks (player hits) ──────────────────────────────────────────────
   _spawnSparks(position, isHeadshot) {
     const count = isHeadshot ? 10 : 6;
     const base  = isHeadshot ? 0.038 : 0.022;
@@ -155,6 +160,41 @@ export class Game {
         ),
         age: 0,
         maxAge: 0.36 + Math.random() * 0.22,
+      });
+      this.scene.add(mesh);
+    }
+  }
+
+  // ── Concrete chip debris ──────────────────────────────────────────────────
+  _spawnChips(position) {
+    const count = 5 + Math.floor(Math.random() * 5); // 5-9 chips
+    for (let i = 0; i < count; i++) {
+      const s   = 0.018 + Math.random() * 0.032;
+      const geo = new THREE.BoxGeometry(s * (1.2 + Math.random()), s, s * (1.2 + Math.random()));
+      const mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color().setHSL(0, 0, 0.38 + Math.random() * 0.28),
+        transparent: true, opacity: 1, depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(position);
+
+      const theta = Math.random() * Math.PI * 2;
+      const spd   = 0.6 + Math.random() * 1.4;
+
+      this._particles.push({
+        mesh,
+        vel: new THREE.Vector3(
+          Math.cos(theta) * spd,
+          Math.random() * 1.2 + 0.3,
+          Math.sin(theta) * spd
+        ),
+        rotV: new THREE.Vector3(
+          (Math.random() - 0.5) * 12,
+          (Math.random() - 0.5) * 12,
+          (Math.random() - 0.5) * 12
+        ),
+        age: 0,
+        maxAge: 0.4 + Math.random() * 0.25,
       });
       this.scene.add(mesh);
     }
@@ -215,22 +255,25 @@ export class Game {
     net.on('shoot', (msg) => {
       if (msg._from === net.myId) return;
 
-      // Show tracer from remote shooter's gun
       this._spawnTracer(
         new THREE.Vector3().fromArray(msg.origin),
         new THREE.Vector3().fromArray(msg.end)
       );
 
-      // Apply wall damage
       if (msg.wallId) {
         const wall = this.wallManager.getById(msg.wallId);
-        if (wall) wall.applyHit(
-          new THREE.Vector3().fromArray(msg.hitPoint),
-          new THREE.Vector3().fromArray(msg.rayDir)
-        );
+        if (wall) {
+          wall.applyHit(
+            new THREE.Vector3().fromArray(msg.hitPoint),
+            new THREE.Vector3().fromArray(msg.rayDir)
+          );
+          // Concrete chips visible to all clients
+          if (wall.type === 'concrete') {
+            this._spawnChips(new THREE.Vector3().fromArray(msg.hitPoint));
+          }
+        }
       }
 
-      // Shooter-determined player hit — apply if we are the target
       if (msg.playerHit && msg.targetId === net.myId) {
         this.hud.showHitFlash();
         this._takeDamage(msg.hitType === 'head' ? HEAD_DMG : BODY_DMG);
@@ -287,16 +330,17 @@ export class Game {
     this._updateParticles(dt);
     this.hud.update(dt);
 
-    // Position sync tied to render loop — avoids setInterval/rAF timer conflicts
     if (this.net) {
       this._syncAccum += dt * 1000;
       if (this._syncAccum >= SYNC_MS) {
         this._syncAccum -= SYNC_MS;
         this.net.send({
-          type: 'playerState', id: this.net.myId,
-          pos:   this.localPlayer.getPosition().toArray(),
-          yaw:   this.localPlayer.getYaw(),
-          pitch: this.localPlayer.getPitch(),
+          type:      'playerState',
+          id:        this.net.myId,
+          pos:       this.localPlayer.getPosition().toArray(),
+          yaw:       this.localPlayer.getYaw(),
+          pitch:     this.localPlayer.getPitch(),
+          crouching: this.localPlayer.isCrouching,
         });
       }
     }

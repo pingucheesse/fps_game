@@ -1,13 +1,12 @@
 import * as THREE from 'three';
 import { PlayerController } from './PlayerController.js';
 import { Gun } from '../weapons/Gun.js';
-import { EYE_HEIGHT } from '../constants.js';
+import { EYE_HEIGHT, CROUCH_EYE_HEIGHT } from '../constants.js';
 
 export class LocalPlayer {
   constructor(scene, canvas, settings = {}) {
-    // Rig: yawObject → pitchObject → camera
-    this.yawObj   = new THREE.Object3D();
-    this.yawObj.position.set(0, 0, 3); // spawn point
+    this.yawObj = new THREE.Object3D();
+    this.yawObj.position.set(0, 0, 3);
 
     this.pitchObj = new THREE.Object3D();
     this.pitchObj.position.y = EYE_HEIGHT;
@@ -27,11 +26,16 @@ export class LocalPlayer {
     this.controller = new PlayerController(canvas, this.yawObj, this.pitchObj, settings);
   }
 
-  get isLocked() { return this.controller.isLocked; }
+  get isLocked()    { return this.controller.isLocked; }
+  get isCrouching() { return this.controller.isCrouching; }
 
   update(dt, wallManager) {
     this.controller.update(dt, wallManager);
     this.gun.update(dt);
+
+    // Smoothly lower / raise camera to match crouch state
+    const targetY = this.isCrouching ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
+    this.pitchObj.position.y += (targetY - this.pitchObj.position.y) * Math.min(1, dt * 10);
   }
 
   getPosition() { return this.yawObj.position.clone(); }

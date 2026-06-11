@@ -1,5 +1,8 @@
 import * as THREE from 'three';
-import { MOVE_SPEED, GRAVITY, JUMP_SPEED, BASE_SENSITIVITY, PLAYER_RADIUS, PLAYER_HEIGHT } from '../constants.js';
+import {
+  MOVE_SPEED, GRAVITY, JUMP_SPEED, BASE_SENSITIVITY,
+  PLAYER_RADIUS, PLAYER_HEIGHT, CROUCH_SPEED_MULT,
+} from '../constants.js';
 
 export class PlayerController {
   constructor(canvas, yawObj, pitchObj, settings = {}) {
@@ -39,15 +42,25 @@ export class PlayerController {
 
   get isLocked() { return document.pointerLockElement === this.canvas; }
 
+  // Hold C or either Ctrl to crouch
+  get isCrouching() {
+    return this.keys.has('KeyC') || this.keys.has('ControlLeft') || this.keys.has('ControlRight');
+  }
+
   update(dt, wallManager) {
     const pos = this.yawObj.position;
+
+    const crouching  = this.isCrouching;
+    const speed      = MOVE_SPEED * (crouching ? CROUCH_SPEED_MULT : 1.0);
+    const playerH    = crouching ? PLAYER_HEIGHT * 0.6 : PLAYER_HEIGHT;
 
     // ── Gravity & jump ──
     if (!this.onGround) {
       this.velocityY -= GRAVITY * dt;
       this.velocityY  = Math.max(this.velocityY, -25);
     }
-    if (this.onGround && this.keys.has('Space')) {
+    // Jumping blocked while crouching
+    if (this.onGround && this.keys.has('Space') && !crouching) {
       this.velocityY = JUMP_SPEED;
       this.onGround  = false;
     }
@@ -61,14 +74,13 @@ export class PlayerController {
 
     if (dir.lengthSq() > 0) {
       dir.normalize().applyEuler(new THREE.Euler(0, this.yawObj.rotation.y, 0));
-      pos.x += dir.x * MOVE_SPEED * dt;
-      pos.z += dir.z * MOVE_SPEED * dt;
+      pos.x += dir.x * speed * dt;
+      pos.z += dir.z * speed * dt;
     }
 
     // ── Vertical ──
     pos.y += this.velocityY * dt;
 
-    // Ground check
     if (pos.y <= 0) {
       pos.y = 0;
       this.velocityY = 0;
@@ -77,30 +89,30 @@ export class PlayerController {
       this.onGround = false;
     }
 
-    // ── Wall collision (AABB push-out) ──
+    // ── Wall collision (AABB push-out — skip passable walls) ──
     if (wallManager) {
-      for (const wall of wallManager.allWalls) this._pushOut(pos, wall.getCollisionBox());
+      for (const wall of wallManager.collidableWalls) {
+        this._pushOut(pos, wall.getCollisionBox(), playerH);
+      }
     }
   }
 
-  _pushOut(pos, box) {
-    // Expand box by player radius
+  _pushOut(pos, box, playerH) {
     const minX = box.min.x - PLAYER_RADIUS, maxX = box.max.x + PLAYER_RADIUS;
     const minZ = box.min.z - PLAYER_RADIUS, maxZ = box.max.z + PLAYER_RADIUS;
-    const minY = box.min.y,                  maxY = box.max.y + PLAYER_HEIGHT;
+    const minY = box.min.y,                  maxY = box.max.y + playerH;
 
     if (pos.x < minX || pos.x > maxX) return;
     if (pos.z < minZ || pos.z > maxZ) return;
-    if (pos.y > maxY || pos.y + PLAYER_HEIGHT < minY) return;
+    if (pos.y > maxY || pos.y + playerH < minY) return;
 
-    // Find the shallowest penetration axis (X or Z only — not Y)
     const ovX1 = pos.x - minX, ovX2 = maxX - pos.x;
     const ovZ1 = pos.z - minZ, ovZ2 = maxZ - pos.z;
     const minOv = Math.min(ovX1, ovX2, ovZ1, ovZ2);
 
-    if (minOv === ovX1) pos.x = minX;
+    if (minOv === ovX1)      pos.x = minX;
     else if (minOv === ovX2) pos.x = maxX;
     else if (minOv === ovZ1) pos.z = minZ;
-    else pos.z = maxZ;
+    else                     pos.z = maxZ;
   }
 }
