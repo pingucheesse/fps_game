@@ -17,16 +17,6 @@ const KNIFE_RANGE = 1.5; // metres
 // Knife wall-damage — no sigma override; uses wall's natural hole size
 const KNIFE_WALL = { strength: 0.9, maxDisplace: 0.003 };
 
-// Spawn points spread across the 32×24 m CQB map
-const SPAWNS = [
-  new THREE.Vector3(-13, 0, -10),
-  new THREE.Vector3( 13, 0, -10),
-  new THREE.Vector3(-13, 0,  10),
-  new THREE.Vector3( 13, 0,  10),
-  new THREE.Vector3(  0, 0, -10),
-  new THREE.Vector3(  0, 0,  10),
-];
-
 export class Game {
   constructor(renderer, netManager, settings = {}) {
     this.renderer = renderer;
@@ -36,8 +26,12 @@ export class Game {
     this.scene.background = new THREE.Color(0x88bbdd);
     this.scene.fog = new THREE.FogExp2(0x88bbdd, 0.012);
 
+    // Deterministic map seed: roomCode is shared by host + joiners so everyone
+    // generates the identical layout. Singleplayer gets a fresh random map.
+    const seed = this.net?.roomCode ?? ('sp' + Math.floor(Math.random() * 1e9));
+
     this.world        = new World(this.scene);
-    this.wallManager  = new WallManager(this.scene);
+    this.wallManager  = new WallManager(this.scene, seed);
     this.localPlayer  = new LocalPlayer(this.scene, renderer.domElement, settings);
     this.remotePlayers = new Map();
     this.raycast = new Raycast(this.wallManager);
@@ -63,8 +57,16 @@ export class Game {
     this._prevTime  = 0;
     this._particles = [];
 
+    // Drop the local player at a spawn point for the generated map
+    this.localPlayer.respawn(this._randomSpawn());
+
     this._bindInput();
     this._setupNet();
+  }
+
+  _randomSpawn() {
+    const pts = this.wallManager.spawnPoints;
+    return pts[Math.floor(Math.random() * pts.length)].clone();
   }
 
   // ── Input ─────────────────────────────────────────────────────────────────
@@ -317,7 +319,7 @@ export class Game {
 
     this.hp    = MAX_HP;
     this.armor = MAX_ARMOR;
-    this.localPlayer.respawn(SPAWNS[Math.floor(Math.random() * SPAWNS.length)]);
+    this.localPlayer.respawn(this._randomSpawn());
     this.hud.setHealth(this.hp, this.armor);
   }
 

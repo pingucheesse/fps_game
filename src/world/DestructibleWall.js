@@ -23,8 +23,10 @@ export class DestructibleWall {
     this._group.rotation.copy(rotation);
     scene.add(this._group);
 
-    const segsX = Math.round(width  * p.segsPerM);
-    const segsY = Math.round(height * p.segsPerM);
+    // Cap subdivisions so a map full of walls stays performant.
+    const MAX_SEG = 64;
+    const segsX = Math.min(Math.round(width  * p.segsPerM), MAX_SEG);
+    const segsY = Math.min(Math.round(height * p.segsPerM), MAX_SEG);
 
     this.geo = new THREE.BoxGeometry(width, height, p.depth, segsX, segsY, 1);
     this.geo.attributes.position.usage = THREE.DynamicDrawUsage;

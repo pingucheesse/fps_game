@@ -46,7 +46,8 @@ export class P2PNet extends NetManager {
       this._peer = new Peer({ debug: 0 });
 
       this._peer.on('open', id => {
-        this.myId = id;
+        this.myId     = id;
+        this.roomCode = code.toUpperCase(); // shared with host → deterministic map seed
         const conn = this._peer.connect(code.toUpperCase(), { reliable: true });
 
         conn.on('open', () => {
