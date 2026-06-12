@@ -1,15 +1,16 @@
 export class HUD {
   constructor() {
-    this._peerEl    = document.getElementById('peer-count');
-    this._hitEl     = document.getElementById('hit-flash');
-    this._hpFill    = document.getElementById('hp-fill');
-    this._hpNum     = document.getElementById('hp-num');
-    this._armorFill = document.getElementById('armor-fill');
-    this._armorNum  = document.getElementById('armor-num');
-    this._armorRow  = document.getElementById('armor-row');
+    this._peerEl      = document.getElementById('peer-count');
+    this._hitEl       = document.getElementById('hit-flash');
+    this._hpFill      = document.getElementById('hp-fill');
+    this._hpNum       = document.getElementById('hp-num');
+    this._armorFill   = document.getElementById('armor-fill');
+    this._armorNum    = document.getElementById('armor-num');
+    this._armorRow    = document.getElementById('armor-row');
     this._roomEl      = document.getElementById('room-code-hud');
     this._notifEl     = document.getElementById('notification');
     this._hitMarkerEl = document.getElementById('hit-marker');
+    this._scoreEl     = document.getElementById('score-display');
     this._hitAlpha    = 0;
     this._notifTimer  = null;
     this._hmTimer     = null;
@@ -33,6 +34,13 @@ export class HUD {
     this._armorRow.style.opacity = armor > 0 ? '1' : '0.35';
   }
 
+  // Kills / deaths score (shown top-centre when non-zero)
+  setScore(kills, deaths) {
+    if (!this._scoreEl) return;
+    this._scoreEl.textContent   = `${kills}  ·  ${deaths}`;
+    this._scoreEl.style.display = 'block';
+  }
+
   // Show room code at top centre (host only)
   setRoomCode(code) {
     if (!this._roomEl) return;
@@ -43,7 +51,7 @@ export class HUD {
   // Brief notification that fades out after 3 s
   showNotification(text) {
     if (!this._notifEl) return;
-    this._notifEl.textContent  = text;
+    this._notifEl.textContent   = text;
     this._notifEl.style.opacity = '1';
     clearTimeout(this._notifTimer);
     this._notifTimer = setTimeout(() => {

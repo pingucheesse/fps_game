@@ -105,6 +105,14 @@
       color: rgba(255,255,255,0.35); font-size: 0.75rem; letter-spacing: 0.1em;
     }
 
+    /* ── Kill / death score ── */
+    #score-display {
+      position: absolute; top: 1rem; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.80); font-size: 1.05rem; letter-spacing: 0.25em;
+      font-weight: 300; pointer-events: none; display: none;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+    }
+
     /* ── Hit marker ── */
     #hit-marker {
       position: absolute; top: 50%; left: 50%;
@@ -243,7 +251,8 @@
     <div id="notification"></div>
     <div id="crosshair"></div>
     <div id="peer-count"></div>
-    <div id="lock-hint">Click to aim · WASD · LMB shoot · C crouch · V knife</div>
+    <div id="lock-hint">Click to aim · WASD · LMB shoot · C crouch · Q/E lean · V knife</div>
+    <div id="score-display"></div>
     <div id="health-display">
       <div class="bar-row">
         <span class="bar-label">HP</span>

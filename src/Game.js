@@ -14,16 +14,17 @@ const HEAD_DMG  = 40;
 const KNIFE_DMG = 60;
 const KNIFE_RANGE = 1.5; // metres
 
-// Knife wall-damage overrides — big area, heavy hit
-const KNIFE_WALL = { sigma: 0.30, strength: 2.8, maxDisplace: 0.004 };
+// Knife wall-damage — no sigma override; uses wall's natural hole size
+const KNIFE_WALL = { strength: 0.9, maxDisplace: 0.003 };
 
+// Spawn points spread across the 32×24 m CQB map
 const SPAWNS = [
-  new THREE.Vector3(-7, 0,  6),
-  new THREE.Vector3( 7, 0,  6),
-  new THREE.Vector3(-7, 0, -6),
-  new THREE.Vector3( 7, 0, -6),
-  new THREE.Vector3( 0, 0,  7),
-  new THREE.Vector3( 0, 0, -7),
+  new THREE.Vector3(-13, 0, -10),
+  new THREE.Vector3( 13, 0, -10),
+  new THREE.Vector3(-13, 0,  10),
+  new THREE.Vector3( 13, 0,  10),
+  new THREE.Vector3(  0, 0, -10),
+  new THREE.Vector3(  0, 0,  10),
 ];
 
 export class Game {
@@ -33,7 +34,7 @@ export class Game {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x88bbdd);
-    this.scene.fog = new THREE.FogExp2(0x88bbdd, 0.014);
+    this.scene.fog = new THREE.FogExp2(0x88bbdd, 0.012);
 
     this.world        = new World(this.scene);
     this.wallManager  = new WallManager(this.scene);
@@ -51,6 +52,12 @@ export class Game {
 
     if (this.net?.isHost && this.net.roomCode) this.hud.setRoomCode(this.net.roomCode);
 
+    // Round / score tracking
+    this._kills          = 0;
+    this._deaths         = 0;
+    this._lastAttackerId = null;
+    this.hud.setScore(0, 0);
+
     this._animId    = null;
     this._syncAccum = 0;
     this._prevTime  = 0;
@@ -64,13 +71,12 @@ export class Game {
   _bindInput() {
     document.addEventListener('mousedown', (e) => {
       if (e.button !== 0 || !this.localPlayer.isLocked) return;
-      if (this.localPlayer.isKnifeMode) this._stab();
-      else this._fire();
+      this._fire();
     });
 
     document.addEventListener('keydown', (e) => {
       if (e.repeat || !this.localPlayer.isLocked) return;
-      if (e.code === 'KeyV') this.localPlayer.toggleKnife();
+      if (e.code === 'KeyV') this._quickStab();
     });
   }
 
@@ -118,9 +124,9 @@ export class Game {
     }
   }
 
-  // ── Knife stab ────────────────────────────────────────────────────────────
-  _stab() {
-    this.localPlayer.knife.stab();
+  // ── Quick melee (V) — shows knife briefly, auto-returns to gun ───────────
+  _quickStab() {
+    this.localPlayer.quickStab();
 
     const camera = this.localPlayer.camera;
     const origin = new THREE.Vector3();
@@ -286,7 +292,8 @@ export class Game {
   }
 
   // ── Damage / respawn ──────────────────────────────────────────────────────
-  _takeDamage(rawDmg) {
+  _takeDamage(rawDmg, attackerId) {
+    if (attackerId) this._lastAttackerId = attackerId;
     let dmg = rawDmg;
     if (this.armor > 0) {
       const blocked = dmg * 0.5;
@@ -295,10 +302,19 @@ export class Game {
     }
     this.hp = Math.max(0, this.hp - dmg);
     this.hud.setHealth(this.hp, this.armor);
-    if (this.hp <= 0) this._respawn();
+    if (this.hp <= 0) this._die();
   }
 
-  _respawn() {
+  _die() {
+    this._deaths++;
+    this.hud.setScore(this._kills, this._deaths);
+    this.hud.showNotification('You died');
+
+    if (this.net && this._lastAttackerId) {
+      this.net.send({ type: 'playerDied', killerId: this._lastAttackerId });
+    }
+    this._lastAttackerId = null;
+
     this.hp    = MAX_HP;
     this.armor = MAX_ARMOR;
     this.localPlayer.respawn(SPAWNS[Math.floor(Math.random() * SPAWNS.length)]);
@@ -343,7 +359,15 @@ export class Game {
       if (msg.playerHit && msg.targetId === net.myId) {
         this.hud.showHitFlash();
         const dmg = msg.knifeDmg ?? (msg.hitType === 'head' ? HEAD_DMG : BODY_DMG);
-        this._takeDamage(dmg);
+        this._takeDamage(dmg, msg._from);
+      }
+    });
+
+    net.on('playerDied', (msg) => {
+      if (msg.killerId === net.myId) {
+        this._kills++;
+        this.hud.setScore(this._kills, this._deaths);
+        this.hud.showNotification('Kill!');
       }
     });
 
@@ -408,6 +432,7 @@ export class Game {
           yaw:       this.localPlayer.getYaw(),
           pitch:     this.localPlayer.getPitch(),
           crouching: this.localPlayer.isCrouching,
+          lean:      this.localPlayer.getLean(),
         });
       }
     }

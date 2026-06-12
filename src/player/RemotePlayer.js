@@ -76,15 +76,21 @@ export class RemotePlayer {
 
     const mat = new THREE.MeshLambertMaterial({ color: hashColor(peerId) });
 
+    // Outer group: position + yaw only
     this.group = new THREE.Group();
-    this.group.add(makeBody(mat));
+
+    // Inner group: lean tilt applied here so position lerp is unaffected
+    this._leanGroup = new THREE.Group();
+    this.group.add(this._leanGroup);
+
+    this._leanGroup.add(makeBody(mat));
 
     this._gun = makePistol();
-    this.group.add(this._gun);
+    this._leanGroup.add(this._gun);
 
     this._pitchObj = new THREE.Object3D();
     this._pitchObj.position.y = EYE_HEIGHT;
-    this.group.add(this._pitchObj);
+    this._leanGroup.add(this._pitchObj);
 
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 10), mat);
     this._pitchObj.add(head);
@@ -95,6 +101,7 @@ export class RemotePlayer {
     this._targetPos   = new THREE.Vector3();
     this._targetYaw   = 0;
     this._targetPitch = 0;
+    this._targetLean  = 0;
     this._crouching   = false;
     this._initialized = false;
   }
@@ -109,15 +116,20 @@ export class RemotePlayer {
     }
     if (msg.yaw       !== undefined) this._targetYaw   = msg.yaw;
     if (msg.pitch     !== undefined) this._targetPitch = msg.pitch;
+    if (msg.lean      !== undefined) this._targetLean  = msg.lean;
     if (msg.crouching !== undefined) this._crouching   = msg.crouching;
   }
 
   update(dt) {
     const t = 0.18;
     this.group.position.lerp(this._targetPos, t);
-    this.group.rotation.y     += (this._targetYaw   - this.group.rotation.y)     * t;
-    this._pitchObj.rotation.x += (this._targetPitch - this._pitchObj.rotation.x) * t;
-    this._gun.rotation.x      += (this._targetPitch * 0.35 - this._gun.rotation.x) * t;
+    this.group.rotation.y          += (this._targetYaw   - this.group.rotation.y)          * t;
+    this._pitchObj.rotation.x      += (this._targetPitch - this._pitchObj.rotation.x)      * t;
+    this._gun.rotation.x           += (this._targetPitch * 0.35 - this._gun.rotation.x)    * t;
+
+    // Lean tilt: inner group rotates on Z axis (local Z = body axis after yaw)
+    const leanTarget = -this._targetLean * 0.20;
+    this._leanGroup.rotation.z += (leanTarget - this._leanGroup.rotation.z) * Math.min(1, dt * 10);
 
     // Lower head visually when crouching
     const targetHeadY = this._crouching ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;

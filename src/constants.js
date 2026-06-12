@@ -27,10 +27,10 @@ export const SYNC_MS = 16; // ~60 fps state broadcast
 export const WALL_TYPES = {
   thin: {
     depth:         0.04,   // 4 cm — flimsy drywall
-    sigma:         0.07,   // small precise holes
+    sigma:         0.05,   // each bullet ~10 cm diam hole; same spot = larger
     strength:      1.5,    // one shot punches through at centre
     threshold:     0.85,
-    maxDisplace:   0.003,
+    maxDisplace:   0.002,
     segsPerM:      80,     // very high poly — tight holes still look round
     color:         0xf0dfc0,
     interiorColor: 0xdecfaa,

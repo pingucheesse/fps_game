@@ -37,8 +37,9 @@ export class Knife {
     this._stabTimer = 0;
   }
 
-  get visible()  { return this._group.visible; }
-  set visible(v) { this._group.visible = v; }
+  get visible()    { return this._group.visible; }
+  set visible(v)   { this._group.visible = v; }
+  get isStabbing() { return this._stabbing; }
 
   stab() {
     this._stabbing  = true;

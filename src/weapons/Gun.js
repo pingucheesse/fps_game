@@ -35,9 +35,10 @@ export class Gun {
     group.position.set(0.16, -0.13, -0.28);
     camera.add(group);
 
-    this._group      = group;
-    this._restZ      = group.position.z;
-    this._flashTimer = 0;
+    this._group        = group;
+    this._restZ        = group.position.z;
+    this._flashTimer   = 0;
+    this._recoilPitch  = 0;
   }
 
   get visible()  { return this._group.visible; }
@@ -45,8 +46,9 @@ export class Gun {
 
   fire() {
     this._flash.intensity = 4;
-    this._flashTimer = 0.055;
+    this._flashTimer      = 0.055;
     this._group.position.z += 0.05;
+    this._recoilPitch = 0.18;
   }
 
   update(dt) {
@@ -54,6 +56,8 @@ export class Gun {
       this._flashTimer -= dt;
       if (this._flashTimer <= 0) { this._flash.intensity = 0; this._flashTimer = 0; }
     }
-    this._group.position.z += (this._restZ - this._group.position.z) * Math.min(1, dt * 14);
+    this._group.position.z   += (this._restZ - this._group.position.z) * Math.min(1, dt * 14);
+    this._recoilPitch        += (0 - this._recoilPitch) * Math.min(1, dt * 10);
+    this._group.rotation.x    = -this._recoilPitch;
   }
 }

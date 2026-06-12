@@ -3,31 +3,52 @@ import { DestructibleWall } from './DestructibleWall.js';
 
 const { PI } = Math;
 
-// Expanded 20 × 16 m room (x: -10…10, z: -8…8)
+// 32 × 24 m CQB map  (x: -16…16, z: -12…12)
+// Three parallel N-S corridors separated by concrete dividers at x = ±6.
+// Each divider has a 6 m gap in the middle for cross-corridor movement.
+// Heavy cover fills the open flanks; thin breakable walls for breaching.
 const WALL_DEFS = [
-  // ── CONCRETE perimeter ────────────────────────────────────────────────────
-  { type: 'concrete', w: 20, h: 3, pos: [  0,  1.5, -8], rot: [0,      0, 0] }, // N
-  { type: 'concrete', w: 20, h: 3, pos: [  0,  1.5,  8], rot: [0,     PI, 0] }, // S
-  { type: 'concrete', w: 16, h: 3, pos: [-10,  1.5,  0], rot: [0,  PI/2, 0] }, // W
-  { type: 'concrete', w: 16, h: 3, pos: [ 10,  1.5,  0], rot: [0, -PI/2, 0] }, // E
+  // ── Outer concrete perimeter ─────────────────────────────────────────────
+  { type:'concrete', w:32, h:3, pos:[ 0,1.5,-12], rot:[0,0,0]      }, // N
+  { type:'concrete', w:32, h:3, pos:[ 0,1.5, 12], rot:[0,PI,0]     }, // S
+  { type:'concrete', w:24, h:3, pos:[-16,1.5,  0], rot:[0, PI/2,0]  }, // W
+  { type:'concrete', w:24, h:3, pos:[ 16,1.5,  0], rot:[0,-PI/2,0]  }, // E
 
-  // ── CONCRETE central pillars (3 corridors: ±2.5 m sides, 5 m centre) ──────
-  { type: 'concrete', w: 3, h: 3, pos: [-4.5, 1.5, 0], rot: [0, 0, 0] }, // left  (x: -6 to -3)
-  { type: 'concrete', w: 3, h: 3, pos: [ 4.5, 1.5, 0], rot: [0, 0, 0] }, // right (x:  3 to  6)
+  // ── Central N-S dividers at x = -6 (gap: z = -3..3) ─────────────────────
+  { type:'concrete', w:9, h:3, pos:[-6,1.5,-7.5], rot:[0,PI/2,0] }, // N piece
+  { type:'concrete', w:9, h:3, pos:[-6,1.5, 7.5], rot:[0,PI/2,0] }, // S piece
+  // ── Central N-S dividers at x = +6 ──────────────────────────────────────
+  { type:'concrete', w:9, h:3, pos:[ 6,1.5,-7.5], rot:[0,PI/2,0] }, // N piece
+  { type:'concrete', w:9, h:3, pos:[ 6,1.5, 7.5], rot:[0,PI/2,0] }, // S piece
 
-  // ── MEDIUM mid-room dividers ───────────────────────────────────────────────
-  { type: 'medium', w: 4, h: 3, pos: [-8, 1.5, -4], rot: [0,  PI/2, 0] }, // NW (spans z: -6 to -2)
-  { type: 'medium', w: 4, h: 3, pos: [ 8, 1.5, -4], rot: [0, -PI/2, 0] }, // NE
-  { type: 'medium', w: 4, h: 3, pos: [-8, 1.5,  4], rot: [0,  PI/2, 0] }, // SW
-  { type: 'medium', w: 4, h: 3, pos: [ 8, 1.5,  4], rot: [0, -PI/2, 0] }, // SE
+  // ── Side cross-walls (chokepoints in outer corridors) ────────────────────
+  { type:'concrete', w:4, h:3, pos:[-11,1.5,-6], rot:[0,0,0] }, // NW
+  { type:'concrete', w:4, h:3, pos:[-11,1.5, 6], rot:[0,0,0] }, // SW
+  { type:'concrete', w:4, h:3, pos:[ 11,1.5,-6], rot:[0,0,0] }, // NE
+  { type:'concrete', w:4, h:3, pos:[ 11,1.5, 6], rot:[0,0,0] }, // SE
 
-  // ── THIN cover walls (breakable) ──────────────────────────────────────────
-  { type: 'thin', w: 3, h: 2.5, pos: [  0, 1.25, -5], rot: [0, PI/2, 0] }, // N-centre
-  { type: 'thin', w: 3, h: 2.5, pos: [  0, 1.25,  5], rot: [0, PI/2, 0] }, // S-centre
-  { type: 'thin', w: 3, h: 2.5, pos: [ -4, 1.25, -5], rot: [0,    0, 0] }, // NW cover
-  { type: 'thin', w: 3, h: 2.5, pos: [  4, 1.25, -5], rot: [0,    0, 0] }, // NE cover
-  { type: 'thin', w: 3, h: 2.5, pos: [ -4, 1.25,  5], rot: [0,    0, 0] }, // SW cover
-  { type: 'thin', w: 3, h: 2.5, pos: [  4, 1.25,  5], rot: [0,    0, 0] }, // SE cover
+  // ── Medium breakable dividers (room-within-corridor cover) ───────────────
+  { type:'medium', w:5, h:3, pos:[-11,1.5, 0], rot:[0,0,0]    }, // W-mid
+  { type:'medium', w:5, h:3, pos:[ 11,1.5, 0], rot:[0,0,0]    }, // E-mid
+  { type:'medium', w:4, h:3, pos:[  0,1.5,-9], rot:[0,0,0]    }, // N-center
+  { type:'medium', w:4, h:3, pos:[  0,1.5, 9], rot:[0,0,0]    }, // S-center
+
+  // ── Low cover (crouch-height, medium) ────────────────────────────────────
+  { type:'medium', w:3, h:1.1, pos:[-9,0.55,-3], rot:[0,PI/2,0] },
+  { type:'medium', w:3, h:1.1, pos:[ 9,0.55,-3], rot:[0,PI/2,0] },
+  { type:'medium', w:3, h:1.1, pos:[-9,0.55, 3], rot:[0,PI/2,0] },
+  { type:'medium', w:3, h:1.1, pos:[ 9,0.55, 3], rot:[0,PI/2,0] },
+  { type:'medium', w:3, h:1.1, pos:[ 0,0.55, 0], rot:[0,0,0]    }, // dead-center
+
+  // ── Thin breakable cover (flanks and N/S approaches) ─────────────────────
+  { type:'thin', w:3, h:2.5, pos:[-3,1.25,-9],  rot:[0,0,0]      },
+  { type:'thin', w:3, h:2.5, pos:[ 3,1.25,-9],  rot:[0,0,0]      },
+  { type:'thin', w:3, h:2.5, pos:[-3,1.25, 9],  rot:[0,0,0]      },
+  { type:'thin', w:3, h:2.5, pos:[ 3,1.25, 9],  rot:[0,0,0]      },
+  { type:'thin', w:3, h:2.5, pos:[-3,1.25, 0],  rot:[0,PI/2,0]   },
+  { type:'thin', w:3, h:2.5, pos:[ 3,1.25, 0],  rot:[0,PI/2,0]   },
+  { type:'thin', w:3, h:2.5, pos:[ 0,1.25,-4],  rot:[0,0,0]      },
+  { type:'thin', w:3, h:2.5, pos:[ 0,1.25, 4],  rot:[0,0,0]      },
 ];
 
 export class WallManager {
@@ -62,6 +83,5 @@ export class WallManager {
   }
 
   get allWalls()        { return Array.from(this.walls.values()); }
-  // Only walls that should still block player movement
   get collidableWalls() { return this.allWalls.filter(w => !w._passable); }
 }

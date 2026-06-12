@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  MOVE_SPEED, GRAVITY, JUMP_SPEED, BASE_SENSITIVITY,
+  MOVE_SPEED, GRAVITY, BASE_SENSITIVITY,
   PLAYER_RADIUS, PLAYER_HEIGHT, CROUCH_SPEED_MULT,
 } from '../constants.js';
 
@@ -40,11 +40,14 @@ export class PlayerController {
     document.addEventListener('keyup',   (e) => this.keys.delete(e.code));
   }
 
-  get isLocked() { return document.pointerLockElement === this.canvas; }
+  get isLocked()   { return document.pointerLockElement === this.canvas; }
+  get isCrouching(){ return this.keys.has('KeyC'); }
 
-  // Hold C or either Ctrl to crouch
-  get isCrouching() {
-    return this.keys.has('KeyC') || this.keys.has('ControlLeft') || this.keys.has('ControlRight');
+  // -1 = lean left (Q), 0 = upright, +1 = lean right (E)
+  get lean() {
+    if (this.keys.has('KeyQ')) return -1;
+    if (this.keys.has('KeyE')) return  1;
+    return 0;
   }
 
   update(dt, wallManager) {
@@ -54,15 +57,10 @@ export class PlayerController {
     const speed      = MOVE_SPEED * (crouching ? CROUCH_SPEED_MULT : 1.0);
     const playerH    = crouching ? PLAYER_HEIGHT * 0.6 : PLAYER_HEIGHT;
 
-    // ── Gravity & jump ──
+    // ── Gravity (no jump) ──
     if (!this.onGround) {
       this.velocityY -= GRAVITY * dt;
       this.velocityY  = Math.max(this.velocityY, -25);
-    }
-    // Jumping blocked while crouching
-    if (this.onGround && this.keys.has('Space') && !crouching) {
-      this.velocityY = JUMP_SPEED;
-      this.onGround  = false;
     }
 
     // ── Horizontal movement ──
