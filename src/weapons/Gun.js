@@ -52,6 +52,7 @@ export class Gun {
     this._slideT      = 0;
     this._time        = 0;
     this._spread      = 0;
+    this._spreadTarget = 0;
     this._frac        = 1;
     this._reloading   = false;
     this._reloadPr    = 0;
@@ -123,11 +124,10 @@ export class Gun {
   setAmmoFraction(f) {
     f = Math.max(0, Math.min(1, f));
     const MORPH_START = 0.5; // morph begins at 10/20
-    const morph = Math.max(0, Math.min(1, (MORPH_START - f) / MORPH_START));
-    // Near-pure-black + tight at full ammo; bright blue + spread when depleted
-    this._mat.color.setRGB(0.015 + 0.275 * morph, 0.015 + 0.645 * morph, 0.02 + 0.98 * morph);
-    this._spread = morph;
-    this._frac   = f; // drives per-particle fade
+    // Set a TARGET spread; update() eases toward it so stepping one round at a
+    // time (e.g. 6→7 on regen) glides between stages instead of snapping.
+    this._spreadTarget = Math.max(0, Math.min(1, (MORPH_START - f) / MORPH_START));
+    this._frac = f; // drives per-particle fade
   }
 
   // Begin a reload: smoothly converge from the current spread over the whole
@@ -203,12 +203,14 @@ export class Gun {
     let sp, forcePresent = false;
     if (this._reloading) {
       sp = this._reloadSpread0 * (1 - this._reloadPr);
-      this._spread = sp;
+      this._spread = this._spreadTarget = sp;
       forcePresent = true;
-      this._mat.color.setRGB(0.015 + 0.275 * sp, 0.015 + 0.645 * sp, 0.02 + 0.98 * sp);
     } else {
+      // Ease the spread toward its target so per-round ammo changes glide
+      this._spread += (this._spreadTarget - this._spread) * Math.min(1, dt * 5);
       sp = this._spread;
     }
+    this._mat.color.setRGB(0.015 + 0.275 * sp, 0.015 + 0.645 * sp, 0.02 + 0.98 * sp);
     const fr = this._frac, fade = Math.min(1, dt * 6);
     const pts = this._pts, inst = this._inst;
     for (let i = 0; i < pts.length; i++) {
