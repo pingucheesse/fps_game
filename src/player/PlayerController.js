@@ -32,10 +32,16 @@ export class PlayerController {
 
     document.addEventListener('mousemove', (e) => {
       if (document.pointerLockElement !== canvas) return;
-      yawObj.rotation.y -= e.movementX * this.sensitivity;
+      // Browsers (esp. Chromium) can emit a single huge movementX/Y spike — most
+      // often right after pointer lock engages — which snaps the view instantly.
+      // Drop clearly-spurious deltas so the camera never flicks.
+      let dx = e.movementX, dy = e.movementY;
+      const SPIKE = 400;
+      if (Math.abs(dx) > SPIKE || Math.abs(dy) > SPIKE) return;
+      yawObj.rotation.y -= dx * this.sensitivity;
       pitchObj.rotation.x = Math.max(
         -Math.PI / 2 + 0.01,
-        Math.min(Math.PI / 2 - 0.01, pitchObj.rotation.x - e.movementY * this.sensitivity)
+        Math.min(Math.PI / 2 - 0.01, pitchObj.rotation.x - dy * this.sensitivity)
       );
     });
 
