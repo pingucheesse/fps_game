@@ -221,9 +221,8 @@ export class Game {
     if (this._reloading) return;
     this._reloading   = true;
     this._reloadStart = performance.now();
-    this._reloadFrom  = this._ammo / MAX_AMMO; // reform from current state, not 0
     this.hud.setAmmo(0, MAX_AMMO, true);
-    this.localPlayer.gun.triggerReload();
+    this.localPlayer.gun.startReload();
   }
 
   // ── Quick melee (V) — shows knife briefly, auto-returns to gun ───────────
@@ -619,15 +618,13 @@ export class Game {
     this.hud.update(dt);
 
     if (this._reloading) {
-      // Reform the gun gradually over RELOAD_MS from wherever it was — faded
-      // particles grow back and ride the scatter home as the magazine refills.
+      // Smoothly converge the gun home over RELOAD_MS (handled by the gun)
       const pr = (performance.now() - this._reloadStart) / RELOAD_MS;
-      const from = this._reloadFrom;
-      this.localPlayer.gun.setAmmoFraction(from + (1 - from) * Math.min(1, pr));
+      this.localPlayer.gun.setReloadProgress(pr);
       if (pr >= 1) {
         this._ammo = MAX_AMMO;
         this._reloading = false;
-        this.localPlayer.gun.setAmmoFraction(1);
+        this.localPlayer.gun.finishReload();
         this.hud.setAmmo(this._ammo, MAX_AMMO);
       }
     } else if (this._ammo > 0 && this._ammo < MAX_AMMO &&

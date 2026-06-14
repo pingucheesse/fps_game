@@ -53,6 +53,9 @@ export class Gun {
     this._time        = 0;
     this._spread      = 0;
     this._frac        = 1;
+    this._reloading   = false;
+    this._reloadPr    = 0;
+    this._reloadSpread0 = 0;
 
     this._buildCloud();
 
@@ -127,17 +130,35 @@ export class Gun {
     this._frac   = f; // drives per-particle fade
   }
 
-  // Old-style converging reload flourish, parented to the gun so it follows you:
-  // a burst of blue cubes that fly in from around the gun and merge into it.
-  triggerReload() {
-    const N = 70;
+  // Begin a reload: smoothly converge from the current spread over the whole
+  // reload (set via setReloadProgress) and play the converging flourish.
+  startReload() {
+    this._reloading     = true;
+    this._reloadPr      = 0;
+    this._reloadSpread0 = this._spread; // 1 if empty/spread, ~0 if still solid
+    this._spawnReloadFlourish();
+  }
+  setReloadProgress(pr) { this._reloadPr = Math.max(0, Math.min(1, pr)); }
+  finishReload() { this._reloading = false; this.setAmmoFraction(1); }
+
+  // Old-style flourish: a burst of blue cubes that fly in and into the barrel /
+  // slide. Parented to the gun (and never frustum-culled) so it follows you.
+  _spawnReloadFlourish() {
+    const N = 80;
     for (let i = 0; i < N; i++) {
       const from = new THREE.Vector3(
         (Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.42, (Math.random() - 0.5) * 0.5,
       );
-      const target = this._pts[(Math.random() * this._pts.length) | 0].base;
+      // Target the slide / barrel region so particles read as going into the barrel
+      const tb = Math.random() < 0.5 ? PART_BOXES[0] : PART_BOXES[2];
+      const target = new THREE.Vector3(
+        tb.c[0] + (Math.random() - 0.5) * tb.s[0],
+        tb.c[1] + (Math.random() - 0.5) * tb.s[1],
+        tb.c[2] + (Math.random() - 0.5) * tb.s[2],
+      );
       const mesh = new THREE.Mesh(this._fxGeo, this._fxMat);
       mesh.position.copy(from);
+      mesh.frustumCulled = false;
       this._group.add(mesh);
       this._reloadFx.push({ mesh, from, target, age: 0, life: 0.7 + Math.random() * 0.7 });
     }
@@ -177,11 +198,22 @@ export class Gun {
     // fader particle shrinks to nothing below its dropAt and grows back on reload,
     // then rides the scatter home as the magazine refills.
     const t = this._time += dt;
-    const sp = this._spread, fr = this._frac, fade = Math.min(1, dt * 6);
+    // While reloading, converge smoothly from the start-spread to 0 over the full
+    // reload and force every particle present, so they glide home (no pop/snap).
+    let sp, forcePresent = false;
+    if (this._reloading) {
+      sp = this._reloadSpread0 * (1 - this._reloadPr);
+      this._spread = sp;
+      forcePresent = true;
+      this._mat.color.setRGB(0.015 + 0.275 * sp, 0.015 + 0.645 * sp, 0.02 + 0.98 * sp);
+    } else {
+      sp = this._spread;
+    }
+    const fr = this._frac, fade = Math.min(1, dt * 6);
     const pts = this._pts, inst = this._inst;
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i];
-      const target = fr >= p.dropAt ? 1 : 0;
+      const target = (forcePresent || fr >= p.dropAt) ? 1 : 0;
       p.presence += (target - p.presence) * fade;
       const slz = p.part === SLIDE_PART ? slideOffset : 0;
       _v.set(
