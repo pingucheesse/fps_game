@@ -184,20 +184,30 @@ export class Game {
   }
 
   // ── Tracer ────────────────────────────────────────────────────────────────
+  // A short bright streak that travels from muzzle to impact at a finite speed,
+  // so it reads as a projectile whizzing past rather than an instant line.
   _spawnTracer(start, end) {
-    const geo = new THREE.BufferGeometry().setFromPoints([start.clone(), end.clone()]);
-    const mat = new THREE.LineBasicMaterial({
-      color: 0xffee88, transparent: true, opacity: 0.9,
-      depthTest: false, depthWrite: false,
-    });
-    const line = new THREE.Line(geo, mat);
-    this.scene.add(line);
+    const s = start.clone(), e = end.clone();
+    const dir = e.clone().sub(s);
+    const dist = dir.length();
+    if (dist < 0.05) return;
+    dir.normalize();
 
-    const t0 = performance.now();
+    const SPEED = 95;                                   // m/s — fast but visible
+    const len   = Math.min(2.5, Math.max(0.8, dist * 0.5));
+    const geo = new THREE.CylinderGeometry(0.016, 0.016, len, 6);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffdd66, transparent: true, opacity: 0.92, depthWrite: false });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir); // cylinder axis → travel dir
+    this.scene.add(mesh);
+
+    const dur = (dist / SPEED) * 1000;
+    const t0  = performance.now();
     const tick = () => {
-      const e = performance.now() - t0;
-      if (e >= 120) { this.scene.remove(line); geo.dispose(); mat.dispose(); return; }
-      mat.opacity = 0.9 * (1 - e / 120);
+      const frac = (performance.now() - t0) / dur;
+      if (frac >= 1) { this.scene.remove(mesh); geo.dispose(); mat.dispose(); return; }
+      // Place the streak so its leading tip sits at the current projectile position
+      mesh.position.copy(s).addScaledVector(dir, frac * dist - len / 2);
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
