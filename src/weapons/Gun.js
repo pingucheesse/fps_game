@@ -20,7 +20,7 @@ const PART_BOXES = [
   { c: [0,  0.006, MUZZLE + BARREL_LEN / 2], s: [0.012, 0.012, BARREL_LEN] },// barrel
   { c: [0, -0.05,  REAR - 0.025],            s: [0.022, 0.075, 0.05] },      // grip
 ];
-const PARTICLE_COUNT = 2800;
+const PARTICLE_COUNT = 3400;
 const SLIDE_PART = 0; // index of the slide box in PART_BOXES (it racks back on fire)
 
 const _m4 = new THREE.Matrix4();
@@ -55,6 +55,11 @@ export class Gun {
     this._frac        = 1;
 
     this._buildCloud();
+
+    // Converging reload-flourish particles (parented → follow the gun)
+    this._fxGeo = new THREE.BoxGeometry(0.006, 0.006, 0.006);
+    this._fxMat = new THREE.MeshBasicMaterial({ color: 0x4aa8ff, transparent: true, depthWrite: false });
+    this._reloadFx = [];
   }
 
   // Densely sample each part box → at full ammo the instances pack together so
@@ -116,9 +121,26 @@ export class Gun {
     f = Math.max(0, Math.min(1, f));
     const MORPH_START = 0.5; // morph begins at 10/20
     const morph = Math.max(0, Math.min(1, (MORPH_START - f) / MORPH_START));
-    this._mat.color.setRGB(0.04 + 0.25 * morph, 0.05 + 0.61 * morph, 0.06 + 0.94 * morph);
+    // Near-pure-black + tight at full ammo; bright blue + spread when depleted
+    this._mat.color.setRGB(0.015 + 0.275 * morph, 0.015 + 0.645 * morph, 0.02 + 0.98 * morph);
     this._spread = morph;
     this._frac   = f; // drives per-particle fade
+  }
+
+  // Old-style converging reload flourish, parented to the gun so it follows you:
+  // a burst of blue cubes that fly in from around the gun and merge into it.
+  triggerReload() {
+    const N = 70;
+    for (let i = 0; i < N; i++) {
+      const from = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.42, (Math.random() - 0.5) * 0.5,
+      );
+      const target = this._pts[(Math.random() * this._pts.length) | 0].base;
+      const mesh = new THREE.Mesh(this._fxGeo, this._fxMat);
+      mesh.position.copy(from);
+      this._group.add(mesh);
+      this._reloadFx.push({ mesh, from, target, age: 0, life: 0.7 + Math.random() * 0.7 });
+    }
   }
 
   fire() {
@@ -173,5 +195,15 @@ export class Gun {
       inst.setMatrixAt(i, _m4);
     }
     inst.instanceMatrix.needsUpdate = true;
+
+    // Converging reload flourish — fly in from around the gun and merge in
+    for (let i = this._reloadFx.length - 1; i >= 0; i--) {
+      const fx = this._reloadFx[i];
+      fx.age += dt;
+      const tt = fx.age / fx.life;
+      if (tt >= 1) { this._group.remove(fx.mesh); this._reloadFx.splice(i, 1); continue; }
+      fx.mesh.position.lerpVectors(fx.from, fx.target, 1 - (1 - tt) * (1 - tt)); // easeOut
+      fx.mesh.scale.setScalar(tt < 0.7 ? 1 : Math.max(0.001, 1 - (tt - 0.7) / 0.3));
+    }
   }
 }
