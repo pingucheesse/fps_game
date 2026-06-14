@@ -30,6 +30,8 @@ export class Game {
     // Deterministic map seed: roomCode is shared by host + joiners so everyone
     // generates the identical layout. Singleplayer gets a fresh random map.
     const seed = this.net?.roomCode ?? ('sp' + Math.floor(Math.random() * 1e9));
+    this._baseSeed = seed;
+    this._mapRound  = 0;
 
     this.world        = new World(this.scene);
     this.wallManager  = new WallManager(this.scene, seed);
@@ -69,6 +71,47 @@ export class Game {
   _randomSpawn() {
     const pts = this.wallManager.spawnPoints;
     return pts[Math.floor(Math.random() * pts.length)].clone();
+  }
+
+  _clearParticles() {
+    for (const p of this._particles) {
+      this.scene.remove(p.mesh);
+      p.mesh.geometry.dispose();
+      p.mesh.material.dispose();
+    }
+    this._particles.length = 0;
+  }
+
+  _applyNewMap(seed, winnerId) {
+    this.wallManager.loadMap(seed);
+    this.minimap.reload(this.wallManager);
+
+    this._clearParticles();
+    this.hp    = MAX_HP;
+    this.armor = MAX_ARMOR;
+    this.hud.setHealth(this.hp, this.armor);
+    this.localPlayer.respawn(this._randomSpawn());
+
+    for (const rp of this.remotePlayers.values()) {
+      const spawn = this._randomSpawn();
+      rp.group.position.copy(spawn);
+      rp._targetPos.copy(spawn);
+    }
+
+    if (winnerId && this.net && winnerId === this.net.myId) {
+      this.hud.showNotification('You win! New map');
+    } else if (winnerId) {
+      this.hud.showNotification('Round over — new map');
+    } else {
+      this.hud.showNotification('New map');
+    }
+  }
+
+  _swapMap(winnerId) {
+    this._mapRound++;
+    const seed = `${this._baseSeed}-r${this._mapRound}`;
+    this._applyNewMap(seed, winnerId);
+    return seed;
   }
 
   // ── Input ─────────────────────────────────────────────────────────────────
@@ -456,8 +499,17 @@ export class Game {
       if (msg.killerId === net.myId) {
         this._kills++;
         this.hud.setScore(this._kills, this._deaths);
-        this.hud.showNotification('Kill!');
       }
+
+      if (msg.killerId && net.isHost) {
+        const seed = this._swapMap(msg.killerId);
+        net.send({ type: 'newMap', seed, winnerId: msg.killerId });
+      }
+    });
+
+    net.on('newMap', (msg) => {
+      if (net.isHost) return;
+      this._applyNewMap(msg.seed, msg.winnerId);
     });
 
     net.on('worldState', (msg) => {

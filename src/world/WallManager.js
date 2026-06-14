@@ -7,23 +7,33 @@ export class WallManager {
     this.scene  = scene;
     this.walls  = new Map();
     this.meshes = [];
+    this._build(seed);
+  }
 
+  _build(seed) {
     const { style, defs, spawns } = generateMap(seed);
     this.style       = style;
     this.spawnPoints = spawns.map(([x, z]) => new THREE.Vector3(x, 0, z));
 
     for (const def of defs) {
-      const wall = new DestructibleWall(scene, {
+      const wall = new DestructibleWall(this.scene, {
         type:     def.type,
         width:    def.w,
         height:   def.h,
         position: new THREE.Vector3(...def.pos),
         rotation: new THREE.Euler(...def.rot),
-        indestructible: !!def.fixed, // outer perimeter stays solid
+        indestructible: !!def.fixed,
       });
       this.walls.set(wall.id, wall);
       this.meshes.push(wall.mesh);
     }
+  }
+
+  loadMap(seed) {
+    for (const w of this.walls.values()) w.dispose(this.scene);
+    this.walls.clear();
+    this.meshes = [];
+    this._build(seed);
   }
 
   getById(id)  { return this.walls.get(id); }

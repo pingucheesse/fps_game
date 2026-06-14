@@ -25,7 +25,7 @@ export class NetManager {
     const handlers = this._handlers[type];
     if (!handlers || handlers.length === 0) {
       // Buffer game-state messages until Game registers its handlers
-      if (['worldState', 'playerState', 'wallHit', 'shoot', 'peerLeft'].includes(type)) {
+      if (['worldState', 'playerState', 'wallHit', 'shoot', 'peerLeft', 'newMap'].includes(type)) {
         this._queue.push(data);
       }
     } else {

@@ -14,6 +14,13 @@ export class Minimap {
     });
   }
 
+  reload(wallManager) {
+    this.rects = wallManager.allWalls.map((w) => {
+      const b = w.getCollisionBox();
+      return { x0: b.min.x, z0: b.min.z, x1: b.max.x, z1: b.max.z, wall: w, type: w.type };
+    });
+  }
+
   _color(type) {
     return type === 'concrete' ? 'rgba(150,150,158,0.95)'
          : type === 'medium'   ? 'rgba(176,138,96,0.95)'
