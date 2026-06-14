@@ -73,6 +73,7 @@ export class LocalPlayer {
   }
 
   getPosition() { return this.yawObj.position.clone(); }
+  getVelocity() { return this.controller.velocity.clone(); }
   getYaw()      { return this.yawObj.rotation.y; }
   getPitch()    { return this.pitchObj.rotation.x; }
 

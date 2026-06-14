@@ -14,6 +14,7 @@ export class PlayerController {
     this.keys      = new Set();
     this.velocityY = 0;
     this.onGround  = false;
+    this.velocity  = new THREE.Vector3(); // current world-space velocity (m/s)
 
     canvas.addEventListener('click', () => {
       if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
@@ -75,6 +76,8 @@ export class PlayerController {
       pos.x += dir.x * speed * dt;
       pos.z += dir.z * speed * dt;
     }
+    // Record current world velocity (dir is unit world dir, or zero when still)
+    this.velocity.set(dir.x * speed, this.velocityY, dir.z * speed);
 
     // ── Vertical ──
     pos.y += this.velocityY * dt;

@@ -97,7 +97,8 @@ export class Game {
 
     const muzzlePos = new THREE.Vector3();
     this.localPlayer.gun.muzzlePoint.getWorldPosition(muzzlePos);
-    this._spawnTracer(muzzlePos, tracerEnd);
+    const shooterVel = this.localPlayer.getVelocity();
+    this._spawnTracer(muzzlePos, tracerEnd, shooterVel);
 
     if (result.playerHit) {
       const hs = result.hitType === 'head';
@@ -114,7 +115,7 @@ export class Game {
       const GUN_OFFSET = new THREE.Vector3(0.35, 1.2, -0.15);
       GUN_OFFSET.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.localPlayer.getYaw());
       const netOrigin = this.localPlayer.getPosition().clone().add(GUN_OFFSET);
-      const msg = { type: 'shoot', origin: netOrigin.toArray(), end: tracerEnd.toArray() };
+      const msg = { type: 'shoot', origin: netOrigin.toArray(), end: tracerEnd.toArray(), vel: shooterVel.toArray() };
 
       if (result.playerHit) {
         msg.playerHit = true;
@@ -185,29 +186,38 @@ export class Game {
 
   // ── Tracer ────────────────────────────────────────────────────────────────
   // A short bright streak that travels from muzzle to impact at a finite speed,
-  // so it reads as a projectile whizzing past rather than an instant line.
-  _spawnTracer(start, end) {
+  // so it reads as a projectile whizzing past. The tail is clamped to the muzzle
+  // so it never extends backwards into the gun, and the whole streak drifts with
+  // the shooter's velocity (the bullet inherits your movement).
+  _spawnTracer(start, end, vel) {
     const s = start.clone(), e = end.clone();
     const dir = e.clone().sub(s);
     const dist = dir.length();
     if (dist < 0.05) return;
     dir.normalize();
+    const v = vel ? vel.clone() : new THREE.Vector3();
 
     const SPEED = 95;                                   // m/s — fast but visible
     const len   = Math.min(2.5, Math.max(0.8, dist * 0.5));
     const geo = new THREE.CylinderGeometry(0.016, 0.016, len, 6);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffdd66, transparent: true, opacity: 0.92, depthWrite: false });
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir); // cylinder axis → travel dir
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir); // axis → travel dir
     this.scene.add(mesh);
 
     const dur = (dist / SPEED) * 1000;
     const t0  = performance.now();
     const tick = () => {
-      const frac = (performance.now() - t0) / dur;
+      const elapsed = performance.now() - t0;
+      const frac = elapsed / dur;
       if (frac >= 1) { this.scene.remove(mesh); geo.dispose(); mat.dispose(); return; }
-      // Place the streak so its leading tip sits at the current projectile position
-      mesh.position.copy(s).addScaledVector(dir, frac * dist - len / 2);
+      const head = frac * dist;
+      const tail = Math.max(0, head - len);             // never extends behind the muzzle
+      const seg  = head - tail;
+      mesh.scale.y = Math.max(0.001, seg / len);
+      mesh.position.copy(s)
+        .addScaledVector(dir, (tail + head) / 2)        // centre between tail and head
+        .addScaledVector(v, elapsed / 1000);            // inherit shooter velocity
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -422,7 +432,8 @@ export class Game {
 
       this._spawnTracer(
         new THREE.Vector3().fromArray(msg.origin),
-        new THREE.Vector3().fromArray(msg.end)
+        new THREE.Vector3().fromArray(msg.end),
+        msg.vel ? new THREE.Vector3().fromArray(msg.vel) : null
       );
 
       if (msg.wallId) {
