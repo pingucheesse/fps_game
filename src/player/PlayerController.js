@@ -12,6 +12,8 @@ export class PlayerController {
     this.sensitivity = ((settings.sensitivity ?? 5) / 5) * BASE_SENSITIVITY;
 
     this.keys      = new Set();
+    this._crouching = false;
+    this._lean       = 0;   // -1 left, 0 upright, +1 right
     this.velocityY = 0;
     this.onGround  = false;
     this.velocity  = new THREE.Vector3(); // current world-space velocity (m/s)
@@ -37,19 +39,24 @@ export class PlayerController {
       );
     });
 
-    document.addEventListener('keydown', (e) => { if (!e.repeat) this.keys.add(e.code); });
-    document.addEventListener('keyup',   (e) => this.keys.delete(e.code));
+    document.addEventListener('keydown', (e) => {
+      if (e.repeat) return;
+      if (e.code === 'KeyC') { this._crouching = !this._crouching; return; }
+      if (e.code === 'KeyQ') { this._lean = this._lean === -1 ? 0 : -1; return; }
+      if (e.code === 'KeyE') { this._lean = this._lean ===  1 ? 0 :  1; return; }
+      this.keys.add(e.code);
+    });
+    document.addEventListener('keyup', (e) => {
+      if (e.code === 'KeyC' || e.code === 'KeyQ' || e.code === 'KeyE') return;
+      this.keys.delete(e.code);
+    });
   }
 
   get isLocked()   { return document.pointerLockElement === this.canvas; }
-  get isCrouching(){ return this.keys.has('KeyC'); }
+  get isCrouching(){ return this._crouching; }
 
-  // -1 = lean left (Q), 0 = upright, +1 = lean right (E)
-  get lean() {
-    if (this.keys.has('KeyQ')) return -1;
-    if (this.keys.has('KeyE')) return  1;
-    return 0;
-  }
+  // -1 = lean left (Q), 0 = upright, +1 = lean right (E) — toggled per key
+  get lean() { return this._lean; }
 
   update(dt, wallManager) {
     const pos = this.yawObj.position;

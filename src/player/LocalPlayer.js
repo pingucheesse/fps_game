@@ -2,19 +2,20 @@ import * as THREE from 'three';
 import { PlayerController } from './PlayerController.js';
 import { Gun } from '../weapons/Gun.js';
 import { Knife } from '../weapons/Knife.js';
-import { EYE_HEIGHT, CROUCH_EYE_HEIGHT } from '../constants.js';
-
-const LEAN_MAX   = 0.20;  // max camera roll (radians ~11°)
-const LEAN_SHIFT = 0.22;  // max sideways camera shift (metres)
+import { EYE_HEIGHT, CROUCH_EYE_HEIGHT, LEAN_MAX } from '../constants.js';
 
 export class LocalPlayer {
   constructor(scene, canvas, settings = {}) {
     this.yawObj = new THREE.Object3D();
     this.yawObj.position.set(0, 0, 3);
 
+    // Pinned at the feet — the whole body swings in an arc from this point
+    this.leanPivot = new THREE.Object3D();
+    this.yawObj.add(this.leanPivot);
+
     this.pitchObj = new THREE.Object3D();
     this.pitchObj.position.y = EYE_HEIGHT;
-    this.yawObj.add(this.pitchObj);
+    this.leanPivot.add(this.pitchObj);
 
     const fov = settings.fov ?? 90;
     this.camera = new THREE.PerspectiveCamera(fov, window.innerWidth / window.innerHeight, 0.05, 200);
@@ -32,6 +33,7 @@ export class LocalPlayer {
     this.controller  = new PlayerController(canvas, this.yawObj, this.pitchObj, settings);
 
     this._leanAngle = 0;
+    this._eyeY      = EYE_HEIGHT;
   }
 
   get isLocked()    { return this.controller.isLocked; }
@@ -59,17 +61,14 @@ export class LocalPlayer {
       this._stabReturn   = false;
     }
 
-    // Smoothly lower / raise camera to match crouch state
-    const targetY = this.isCrouching ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
-    this.pitchObj.position.y += (targetY - this.pitchObj.position.y) * Math.min(1, dt * 10);
+    const lerp = Math.min(1, dt * 10);
+    const targetEyeY = this.isCrouching ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
+    this._eyeY += (targetEyeY - this._eyeY) * lerp;
+    this.pitchObj.position.y = this._eyeY;
 
-    // Q/E lean: roll camera and shift sideways
     const leanTarget = this.controller.lean * LEAN_MAX;
-    this._leanAngle += (leanTarget - this._leanAngle) * Math.min(1, dt * 10);
-    this.camera.rotation.z = -this._leanAngle;
-
-    const shiftTarget = this.controller.lean * LEAN_SHIFT;
-    this.pitchObj.position.x += (shiftTarget - this.pitchObj.position.x) * Math.min(1, dt * 10);
+    this._leanAngle += (leanTarget - this._leanAngle) * lerp;
+    this.leanPivot.rotation.z = -this._leanAngle;
   }
 
   getPosition() { return this.yawObj.position.clone(); }

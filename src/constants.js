@@ -10,6 +10,7 @@ export const PLAYER_RADIUS     = 0.3;
 export const EYE_HEIGHT        = 1.6;
 export const CROUCH_EYE_HEIGHT = 0.72;  // crouched camera level (m)
 export const CROUCH_SPEED_MULT = 0.5;
+export const LEAN_MAX          = (30 * Math.PI) / 180;  // Q/E lean angle (30°)
 
 // Network
 export const SYNC_MS = 16; // ~60 fps state broadcast

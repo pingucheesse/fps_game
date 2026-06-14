@@ -86,8 +86,10 @@ export class Game {
 
   // ── Gun fire ──────────────────────────────────────────────────────────────
   _fire() {
+    if (!this.localPlayer.gun.canFire) return;
+
     const result = this.raycast.fire(this.localPlayer.camera, this.remotePlayers);
-    this.localPlayer.gun.fire();
+    if (!this.localPlayer.gun.fire()) return;
     this._spawnShell();
 
     let tracerEnd;
@@ -199,7 +201,7 @@ export class Game {
 
     const SPEED = 95;                                   // m/s — fast but visible
     const len   = Math.min(2.5, Math.max(0.8, dist * 0.5));
-    const geo = new THREE.CylinderGeometry(0.016, 0.016, len, 6);
+    const geo = new THREE.CylinderGeometry(0.00535, 0.00535, len, 6);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffdd66, transparent: true, opacity: 0.92, depthWrite: false });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir); // axis → travel dir

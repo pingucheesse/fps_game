@@ -230,37 +230,49 @@ export class DestructibleWall {
     this.geo.computeVertexNormals();
   }
 
-  // ── Triangle culling ────────────────────────────────────────────────────────
-  // Each cell is 4 triangles (2 corners + a centre). A sub-triangle is culled once
-  // BOTH its corner vertices pass the damage threshold, so holes eat into cells on
-  // the diagonal → smoother, rounder edges than whole-cell removal, at low poly.
+  // ── Cell culling ──────────────────────────────────────────────────────────
+  // Hybrid square + triangle removal. Each cell is 4 triangles around a centre:
+  //   tri0 = bottom edge (l00,l10)   tri2 = top edge   (l11,l01)
+  //   tri1 = right edge  (l10,l11)   tri3 = left edge  (l01,l00)
+  // • 3–4 damaged corners → remove the whole cell  → clean SQUARE (the voxel).
+  // • exactly 2 adjacent damaged corners → remove just that edge triangle, which
+  //   shaves the stair-step → TRIANGLE smoothing along the hole boundary.
   _cullTriangles() {
     const idx = this.geo.index;
+    const arr = idx.array;
     const { threshold, passThreshold, independentCull } = this._params;
     const mm = this._mirrorMap, xface = !independentCull;
-    const fStart = this._frontStart, fEndV = fStart + this._faceCount;
-    const bStart = this._backStart,  bEndV = bStart + this._faceCount;
 
-    const cornerCullF = (l) => this.damage[l]     >= threshold || (xface && this._damageback[mm[l]] >= threshold);
-    const cornerCullB = (l) => this._damageback[l] >= threshold || (xface && this.damage[mm[l]]     >= threshold);
+    const cullTri = (base, ti) => {
+      const p = base + ti * 3;
+      if (arr[p] === 0 && arr[p + 1] === 0 && arr[p + 2] === 0) return 0;
+      arr[p] = 0; arr[p + 1] = 0; arr[p + 2] = 0; return 1;
+    };
+    const cullCell = (base, d00, d10, d01, d11) => {
+      const count = d00 + d10 + d01 + d11;
+      let n = 0;
+      if (count >= 3) { for (let ti = 0; ti < 4; ti++) n += cullTri(base, ti); }   // square
+      else if (count === 2) {                                                       // edge triangle
+        if (d00 && d10)      n += cullTri(base, 0);
+        else if (d10 && d11) n += cullTri(base, 1);
+        else if (d11 && d01) n += cullTri(base, 2);
+        else if (d01 && d00) n += cullTri(base, 3);
+        // diagonal pair → leave the cell intact
+      }
+      return n;
+    };
 
-    // Front
-    const fEnd = this._frontIdxStart + this._frontIdxCount;
-    for (let t = this._frontIdxStart; t < fEnd; t += 3) {
-      const v = [idx.getX(t), idx.getX(t + 1), idx.getX(t + 2)];
-      if (v[0] === 0 && v[1] === 0 && v[2] === 0) continue;
-      let cull = true, corners = 0;
-      for (const vi of v) if (vi >= fStart && vi < fEndV) { corners++; if (!cornerCullF(vi - fStart)) cull = false; }
-      if (cull && corners > 0) { idx.setX(t, 0); idx.setX(t + 1, 0); idx.setX(t + 2, 0); this._culledCount++; }
+    const cornerF = (l) => (this.damage[l]      >= threshold || (xface && this._damageback[mm[l]] >= threshold)) ? 1 : 0;
+    const cornerB = (l) => (this._damageback[l]  >= threshold || (xface && this.damage[mm[l]]      >= threshold)) ? 1 : 0;
+
+    const fc = this._frontCenters, bc = this._backCenters;
+    for (let k = 0; k < fc.length; k++) {
+      const c = fc[k], base = this._frontIdxStart + k * 12;
+      this._culledCount += cullCell(base, cornerF(c.l00), cornerF(c.l10), cornerF(c.l01), cornerF(c.l11));
     }
-    // Back
-    const bEnd = this._backIdxStart + this._frontIdxCount;
-    for (let t = this._backIdxStart; t < bEnd; t += 3) {
-      const v = [idx.getX(t), idx.getX(t + 1), idx.getX(t + 2)];
-      if (v[0] === 0 && v[1] === 0 && v[2] === 0) continue;
-      let cull = true, corners = 0;
-      for (const vi of v) if (vi >= bStart && vi < bEndV) { corners++; if (!cornerCullB(vi - bStart)) cull = false; }
-      if (cull && corners > 0) { idx.setX(t, 0); idx.setX(t + 1, 0); idx.setX(t + 2, 0); }
+    for (let k = 0; k < bc.length; k++) {
+      const c = bc[k], base = this._backIdxStart + k * 12;
+      cullCell(base, cornerB(c.l00), cornerB(c.l10), cornerB(c.l01), cornerB(c.l11));
     }
 
     idx.needsUpdate = true;

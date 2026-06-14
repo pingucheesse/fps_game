@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PLAYER_RADIUS, EYE_HEIGHT, CROUCH_EYE_HEIGHT } from '../constants.js';
+import { PLAYER_RADIUS, EYE_HEIGHT, CROUCH_EYE_HEIGHT, LEAN_MAX } from '../constants.js';
 
 function hashColor(id) {
   let h = 0;
@@ -76,21 +76,21 @@ export class RemotePlayer {
 
     const mat = new THREE.MeshLambertMaterial({ color: hashColor(peerId) });
 
-    // Outer group: position + yaw only
+    // Feet pinned at the group origin; whole body rotates in an arc from the floor
     this.group = new THREE.Group();
 
-    // Inner group: lean tilt applied here so position lerp is unaffected
-    this._leanGroup = new THREE.Group();
-    this.group.add(this._leanGroup);
+    this._leanPivot = new THREE.Object3D();
+    this.group.add(this._leanPivot);
 
-    this._leanGroup.add(makeBody(mat));
+    this._body = makeBody(mat);
+    this._leanPivot.add(this._body);
 
     this._gun = makePistol();
-    this._leanGroup.add(this._gun);
+    this._leanPivot.add(this._gun);
 
     this._pitchObj = new THREE.Object3D();
     this._pitchObj.position.y = EYE_HEIGHT;
-    this._leanGroup.add(this._pitchObj);
+    this._leanPivot.add(this._pitchObj);
 
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 10), mat);
     this._pitchObj.add(head);
@@ -104,6 +104,8 @@ export class RemotePlayer {
     this._targetLean  = 0;
     this._crouching   = false;
     this._initialized = false;
+    this._leanAngle = 0;
+    this._eyeY      = EYE_HEIGHT;
   }
 
   updateState(msg) {
@@ -127,13 +129,13 @@ export class RemotePlayer {
     this._pitchObj.rotation.x      += (this._targetPitch - this._pitchObj.rotation.x)      * t;
     this._gun.rotation.x           += (this._targetPitch * 0.35 - this._gun.rotation.x)    * t;
 
-    // Lean tilt: inner group rotates on Z axis (local Z = body axis after yaw)
-    const leanTarget = -this._targetLean * 0.20;
-    this._leanGroup.rotation.z += (leanTarget - this._leanGroup.rotation.z) * Math.min(1, dt * 10);
+    const leanTarget = -this._targetLean * LEAN_MAX;
+    this._leanAngle += (leanTarget - this._leanAngle) * Math.min(1, dt * 10);
+    this._leanPivot.rotation.z = this._leanAngle;
 
-    // Lower head visually when crouching
-    const targetHeadY = this._crouching ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
-    this._pitchObj.position.y += (targetHeadY - this._pitchObj.position.y) * Math.min(1, dt * 10);
+    const targetEyeY = this._crouching ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
+    this._eyeY += (targetEyeY - this._eyeY) * Math.min(1, dt * 10);
+    this._pitchObj.position.y = this._eyeY;
   }
 
   dispose(scene) {
