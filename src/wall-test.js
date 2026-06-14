@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { WallManager } from './world/WallManager.js';
 import { DestructibleWall } from './world/DestructibleWall.js';
+import { Gun } from './weapons/Gun.js';
 
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -21,7 +22,18 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 
 let label = '';
 
-if (view === 'holes') {
+let _gun = null;
+if (view === 'gun') {
+  const holder = new THREE.Object3D();
+  scene.add(holder);
+  _gun = new Gun(holder); // gun group ends up at holder-local (0.16,-0.13,-0.28)
+  const frac = parseFloat(params.get('ammo') ?? '0.2');
+  _gun.setAmmoFraction(frac);
+  for (let i = 0; i < 30; i++) _gun.update(0.05); // advance float a bit
+  label = `gun ammoFrac=${frac} (rounds ≈ ${Math.round(frac * 10)})`;
+  camera.position.set(0.16, -0.07, -0.05);
+  camera.lookAt(0.16, -0.13, -0.30);
+} else if (view === 'holes') {
   // Punch a hole in a thin and a medium wall to inspect the edge smoothness.
   const dir = new THREE.Vector3(0, 0, -1);
   const make = (type, x, shots) => {
@@ -71,6 +83,7 @@ document.getElementById('label').textContent = label;
 let frames = 0;
 function loop() {
   requestAnimationFrame(loop);
+  if (_gun) _gun.update(0.016);
   renderer.render(scene, camera);
   if (++frames === 4) window.__ready = true;
 }

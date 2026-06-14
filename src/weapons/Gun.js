@@ -67,21 +67,73 @@ export class Gun {
     this._flashTimer  = 0;
     this._recoilPitch = 0;
     this._slideT      = 0;
+    this._time        = 0;
+    this._pAlpha      = 0;
+
+    this._buildShapeCloud();
+  }
+
+  // A cloud of small blue cubes sampled inside the gun's part volumes. Parented
+  // to the gun so it follows you; it cross-fades in as the solid gun fades out,
+  // and floats gently. By ~1 round the solid gun is gone and only this remains.
+  _buildShapeCloud() {
+    const parts = [
+      { c: [0,  0.006, SLIDE_REST],              s: [0.030, 0.030, SLIDE_LEN] },
+      { c: [0, -0.012, REAR - 0.08],             s: [0.024, 0.018, 0.16] },
+      { c: [0,  0.006, MUZZLE + BARREL_LEN / 2], s: [0.012, 0.012, BARREL_LEN] },
+      { c: [0, -0.05,  REAR - 0.025],            s: [0.022, 0.075, 0.05] },
+    ];
+    const weights = parts.map(p => p.s[0] * p.s[1] * p.s[2]);
+    const wsum = weights.reduce((a, b) => a + b, 0);
+
+    this._pmat = new THREE.MeshBasicMaterial({ color: 0x4aa8ff, transparent: true, opacity: 0, depthWrite: false });
+    const pgeo = new THREE.BoxGeometry(0.0065, 0.0065, 0.0065);
+    this._pcloud = new THREE.Group();
+    this._pcloud.visible = false;
+    this._group.add(this._pcloud);
+
+    this._shapeParts = [];
+    for (let i = 0; i < 64; i++) {
+      let r = Math.random() * wsum, pi = 0;
+      while (r > weights[pi] && pi < parts.length - 1) { r -= weights[pi]; pi++; }
+      const p = parts[pi];
+      const base = new THREE.Vector3(
+        p.c[0] + (Math.random() - 0.5) * p.s[0],
+        p.c[1] + (Math.random() - 0.5) * p.s[1],
+        p.c[2] + (Math.random() - 0.5) * p.s[2],
+      );
+      const mesh = new THREE.Mesh(pgeo, this._pmat);
+      mesh.position.copy(base);
+      this._pcloud.add(mesh);
+      this._shapeParts.push({
+        mesh, base,
+        phase: new THREE.Vector3(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28),
+        freq:  1.5 + Math.random() * 2.5,
+        amp:   0.003 + Math.random() * 0.005,
+      });
+    }
   }
 
   get visible()  { return this._group.visible; }
   set visible(v) { this._group.visible = v; }
   get canFire()  { return this._slideT <= 0; }
 
-  // Ammo fraction 0..1 → the gun fades out and glows blue as it depletes
-  // (the "turning into blue particles" look), solid again at full / after reload.
+  // Ammo fraction 0..1. From full down to ~5 rounds the gun is solid. Below that
+  // the solid mesh fades toward transparent while a gun-shaped blue particle
+  // cloud cross-fades in; by ~1 round the gun is basically just the cloud.
   setAmmoFraction(f) {
-    const op   = 0.25 + 0.75 * Math.max(0, Math.min(1, f));
-    const blue = 1 - Math.max(0, Math.min(1, f));
+    f = Math.max(0, Math.min(1, f));
+    const PARTICLE_START = 0.55; // ~5 rounds (5/10 = 0.5, with a little lead)
+    const GUN_GONE       = 0.12; // ~1 round
+    const solid = Math.max(0, Math.min(1, (f - GUN_GONE) / (PARTICLE_START - GUN_GONE)));
+    const blue  = 1 - f;
     for (const m of this._mats) {
-      m.opacity = op;
+      m.opacity = 0.05 + 0.95 * solid;            // ~transparent near 1 round
       m.emissive.setRGB(0.08 * blue, 0.35 * blue, 0.85 * blue);
     }
+    this._pAlpha = 1 - solid;
+    this._pmat.opacity   = this._pAlpha * 0.95;
+    this._pcloud.visible = this._pAlpha > 0.02;
   }
 
   fire() {
@@ -114,5 +166,18 @@ export class Gun {
         : (1 - (frac - SLIDE_BACK_FRAC) / (1 - SLIDE_BACK_FRAC)) * SLIDE_TRAVEL;
     }
     this._slide.position.z = SLIDE_REST + offset;
+
+    // Float the gun-shape particle cloud while it's showing
+    this._time += dt;
+    if (this._pcloud.visible) {
+      const t = this._time, boost = 0.6 + this._pAlpha;
+      for (const sp of this._shapeParts) {
+        sp.mesh.position.set(
+          sp.base.x + Math.sin(t * sp.freq        + sp.phase.x) * sp.amp * boost,
+          sp.base.y + Math.sin(t * sp.freq * 1.13 + sp.phase.y) * sp.amp * boost,
+          sp.base.z + Math.sin(t * sp.freq * 0.87 + sp.phase.z) * sp.amp * boost,
+        );
+      }
+    }
   }
 }
