@@ -158,6 +158,7 @@ export class Game {
     document.addEventListener('keydown', (e) => {
       if (e.repeat || !this.localPlayer.isLocked) return;
       if (e.code === 'KeyV') this._quickStab();
+      if (e.code === 'KeyR' && !this._reloading && this._ammo < MAX_AMMO) this._startReload();
     });
   }
 

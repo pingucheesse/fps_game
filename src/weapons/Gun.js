@@ -78,13 +78,17 @@ export class Gun {
         p.c[2] + (Math.random() - 0.5) * p.s[2],
       );
       const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+      // ~28% of particles "stray": they fling far and bob a lot as the gun
+      // morphs, so it disperses into a wispy, less-defined gun instead of a
+      // tight blob. The rest stay close and hold the gun's shape.
+      const stray = Math.random() < 0.28;
       this._pts.push({
         base,
         part: pi,
-        scatter: dir.multiplyScalar(0.018 + Math.random() * 0.06),
+        scatter: dir.multiplyScalar(stray ? 0.12 + Math.random() * 0.22 : 0.012 + Math.random() * 0.04),
         phase: new THREE.Vector3(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28),
-        freq:  1.5 + Math.random() * 2.5,
-        amp:   0.004 + Math.random() * 0.005,
+        freq:  (stray ? 0.8 : 1.5) + Math.random() * 2.2,
+        amp:   stray ? 0.012 + Math.random() * 0.02 : 0.003 + Math.random() * 0.004,
       });
       _m4.makeTranslation(base.x, base.y, base.z);
       this._inst.setMatrixAt(i, _m4);
