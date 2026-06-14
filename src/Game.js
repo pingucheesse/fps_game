@@ -356,7 +356,7 @@ export class Game {
     }
   }
 
-  // ── Ejected shell casing (rigid, with physics) ────────────────────────────
+  // ── Ejected shell casing — a little burst of blue particles ────────────────
   _spawnShell() {
     const cam = this.localPlayer.camera;
     const pos = new THREE.Vector3();
@@ -367,26 +367,32 @@ export class Game {
     const up    = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
     const fwd   = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
 
-    // Low-poly brass casing — a rectangular prism, long axis horizontal
-    const geo  = new THREE.BoxGeometry(0.024, 0.0095, 0.0095);
-    const mat  = new THREE.MeshLambertMaterial({ color: 0xc9a227, transparent: true });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.copy(pos);
-    mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
-
-    const vel = new THREE.Vector3()
+    // Shared base velocity so the particles fly out together like a casing
+    const baseVel = new THREE.Vector3()
       .addScaledVector(right, 1.7 + Math.random() * 0.9)   // flicks right
       .addScaledVector(up,    1.3 + Math.random() * 0.7)   // and up
       .addScaledVector(fwd,  -0.3 + Math.random() * 0.3);
 
-    this._particles.push({
-      mesh, vel,
-      rotV: new THREE.Vector3(
-        (Math.random() - 0.5) * 34, (Math.random() - 0.5) * 34, (Math.random() - 0.5) * 34
-      ),
-      age: 0, maxAge: 2.4, fadeDur: 0.5, gravity: 9.8, bounce: true, floorY: 0.012,
-    });
-    this.scene.add(mesh);
+    for (let i = 0; i < 6; i++) {
+      const s    = 0.006 + Math.random() * 0.005;
+      const geo  = new THREE.BoxGeometry(s, s, s);
+      const mat  = new THREE.MeshBasicMaterial({ color: 0x3aa0ff, transparent: true, depthWrite: false });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(pos).add(new THREE.Vector3(
+        (Math.random() - 0.5) * 0.02, (Math.random() - 0.5) * 0.02, (Math.random() - 0.5) * 0.02));
+
+      const vel = baseVel.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.8));
+
+      this._particles.push({
+        mesh, vel,
+        rotV: new THREE.Vector3(
+          (Math.random() - 0.5) * 32, (Math.random() - 0.5) * 32, (Math.random() - 0.5) * 32
+        ),
+        age: 0, maxAge: 1.2 + Math.random() * 0.6, fadeDur: 0.4, gravity: 9.8, bounce: true, floorY: 0.012,
+      });
+      this.scene.add(mesh);
+    }
   }
 
   // ── Concrete chunk debris (bigger rigid pieces, bounce off floor) ─────────
@@ -635,6 +641,7 @@ export class Game {
         this._regenAccum = 0;
         this._ammo++;
         this.localPlayer.gun.setAmmoFraction(this._ammo / MAX_AMMO);
+        this.localPlayer.gun.flourish(14); // blue particles float into the barrel
         this.hud.setAmmo(this._ammo, MAX_AMMO);
       }
     }

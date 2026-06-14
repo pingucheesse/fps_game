@@ -141,10 +141,13 @@ export class Gun {
   setReloadProgress(pr) { this._reloadPr = Math.max(0, Math.min(1, pr)); }
   finishReload() { this._reloading = false; this.setAmmoFraction(1); }
 
+  // A short burst of the converging flourish — used when a single round trickles
+  // back in (passive regen) so blue particles float into the barrel.
+  flourish(n = 14) { this._spawnReloadFlourish(n); }
+
   // Old-style flourish: a burst of blue cubes that fly in and into the barrel /
   // slide. Parented to the gun (and never frustum-culled) so it follows you.
-  _spawnReloadFlourish() {
-    const N = 80;
+  _spawnReloadFlourish(N = 80) {
     for (let i = 0; i < N; i++) {
       const from = new THREE.Vector3(
         (Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.42, (Math.random() - 0.5) * 0.5,
