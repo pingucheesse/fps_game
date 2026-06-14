@@ -15,7 +15,7 @@ const HEAD_DMG  = 40;
 const KNIFE_DMG = 60;
 const KNIFE_RANGE = 1.5; // metres
 
-const MAX_AMMO     = 10;
+const MAX_AMMO     = 20;
 const RELOAD_MS    = 1700;  // full reload (particles pull back into a gun)
 const REGEN_IDLE_S = 1.0;   // idle time before slow ammo regen kicks in
 const REGEN_EVERY_S = 0.6;  // one round restored every this many seconds

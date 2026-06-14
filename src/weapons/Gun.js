@@ -10,6 +10,7 @@ const BARREL_LEN   = SLIDE_TRAVEL;
 const SLIDE_BACK_DUR   = (0.208 * 0.25) / 2;
 const SLIDE_RETURN_DUR = (0.208 * 0.75) / 1.5;
 const SLIDE_CYCLE      = SLIDE_BACK_DUR + SLIDE_RETURN_DUR; // fire-rate gate
+const SLIDE_BACK_FRAC  = SLIDE_BACK_DUR / SLIDE_CYCLE;
 
 // The gun's parts. Particles are split across these so the barrel, slide, frame
 // and grip each form as a distinct dense cluster.
@@ -19,7 +20,8 @@ const PART_BOXES = [
   { c: [0,  0.006, MUZZLE + BARREL_LEN / 2], s: [0.012, 0.012, BARREL_LEN] },// barrel
   { c: [0, -0.05,  REAR - 0.025],            s: [0.022, 0.075, 0.05] },      // grip
 ];
-const PARTICLE_COUNT = 1600;
+const PARTICLE_COUNT = 2800;
+const SLIDE_PART = 0; // index of the slide box in PART_BOXES (it racks back on fire)
 
 const _m4 = new THREE.Matrix4();
 
@@ -78,6 +80,7 @@ export class Gun {
       const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
       this._pts.push({
         base,
+        part: pi,
         scatter: dir.multiplyScalar(0.018 + Math.random() * 0.06),
         phase: new THREE.Vector3(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28),
         freq:  1.5 + Math.random() * 2.5,
@@ -93,13 +96,15 @@ export class Gun {
   set visible(v) { this._group.visible = v; }
   get canFire()  { return this._slideT <= 0; }
 
-  // Ammo fraction 0..1. Full = packed + near-black (looks solid). As it depletes
-  // the particles scatter out / float and turn blue; reload pulls them home.
+  // Ammo fraction 0..1. The gun stays solid + near-black for the top half of the
+  // magazine; only below MORPH_START (half = ~10 of 20) do the particles begin to
+  // scatter, float and turn blue. Reload pulls them back home.
   setAmmoFraction(f) {
     f = Math.max(0, Math.min(1, f));
-    const dep = 1 - f;
-    this._mat.color.setRGB(0.04 + 0.25 * dep, 0.05 + 0.61 * dep, 0.06 + 0.94 * dep);
-    this._spread = dep;
+    const MORPH_START = 0.5; // morph begins at 10/20
+    const morph = Math.max(0, Math.min(1, (MORPH_START - f) / MORPH_START));
+    this._mat.color.setRGB(0.04 + 0.25 * morph, 0.05 + 0.61 * morph, 0.06 + 0.94 * morph);
+    this._spread = morph;
   }
 
   fire() {
@@ -120,18 +125,29 @@ export class Gun {
     this._group.position.z += (this._restZ - this._group.position.z) * Math.min(1, dt * 14);
     this._recoilPitch      += (0 - this._recoilPitch) * Math.min(1, dt * 10);
     this._group.rotation.x  = this._recoilPitch;
-    if (this._slideT > 0) this._slideT = Math.max(0, this._slideT - dt);
 
-    // Position every instance: home when full, scattered + floating as it empties
+    // Slide rack: linear back then forward over the cycle (gates fire rate too)
+    let slideOffset = 0;
+    if (this._slideT > 0) {
+      this._slideT = Math.max(0, this._slideT - dt);
+      const frac = 1 - this._slideT / SLIDE_CYCLE;
+      slideOffset = frac < SLIDE_BACK_FRAC
+        ? (frac / SLIDE_BACK_FRAC) * SLIDE_TRAVEL
+        : (1 - (frac - SLIDE_BACK_FRAC) / (1 - SLIDE_BACK_FRAC)) * SLIDE_TRAVEL;
+    }
+
+    // Position every instance: home when full, scattered + floating as it empties;
+    // the slide particles also rack backwards while firing.
     const t = this._time += dt;
     const sp = this._spread;
     const pts = this._pts, inst = this._inst;
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i];
+      const slz = p.part === SLIDE_PART ? slideOffset : 0;
       _m4.makeTranslation(
         p.base.x + p.scatter.x * sp + Math.sin(t * p.freq        + p.phase.x) * p.amp * sp,
         p.base.y + p.scatter.y * sp + Math.sin(t * p.freq * 1.13 + p.phase.y) * p.amp * sp,
-        p.base.z + p.scatter.z * sp + Math.sin(t * p.freq * 0.87 + p.phase.z) * p.amp * sp,
+        p.base.z + slz + p.scatter.z * sp + Math.sin(t * p.freq * 0.87 + p.phase.z) * p.amp * sp,
       );
       inst.setMatrixAt(i, _m4);
     }

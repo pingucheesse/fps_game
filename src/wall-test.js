@@ -30,7 +30,7 @@ if (view === 'gun') {
   const frac = parseFloat(params.get('ammo') ?? '0.2');
   _gun.setAmmoFraction(frac);
   for (let i = 0; i < 30; i++) _gun.update(0.05); // advance float a bit
-  label = `gun ammoFrac=${frac} (rounds ≈ ${Math.round(frac * 10)})`;
+  label = `gun ammoFrac=${frac} (rounds ≈ ${Math.round(frac * 20)})`;
   camera.position.set(0.16, -0.07, -0.05);
   camera.lookAt(0.16, -0.13, -0.30);
 } else if (view === 'holes') {
