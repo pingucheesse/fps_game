@@ -88,6 +88,7 @@ export class Game {
   _fire() {
     const result = this.raycast.fire(this.localPlayer.camera, this.remotePlayers);
     this.localPlayer.gun.fire();
+    this._spawnShell();
 
     let tracerEnd;
     if (result.playerHit)  tracerEnd = result.hitPoint.clone();
@@ -106,7 +107,7 @@ export class Game {
 
     if (result.hit) {
       const wall = this.wallManager.getById(result.wallId);
-      if (wall?.type === 'concrete') this._spawnChips(result.point);
+      if (wall?.type === 'concrete') { this._spawnChunks(result.point); this._spawnChips(result.point); }
     }
 
     if (this.net) {
@@ -240,6 +241,65 @@ export class Game {
     }
   }
 
+  // ── Ejected shell casing (rigid, with physics) ────────────────────────────
+  _spawnShell() {
+    const cam = this.localPlayer.camera;
+    const pos = new THREE.Vector3();
+    this.localPlayer.gun.ejectPoint.getWorldPosition(pos);
+
+    const q     = cam.getWorldQuaternion(new THREE.Quaternion());
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+    const up    = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    const fwd   = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+
+    // Low-poly brass casing — a rectangular prism, long axis horizontal
+    const geo  = new THREE.BoxGeometry(0.024, 0.0095, 0.0095);
+    const mat  = new THREE.MeshLambertMaterial({ color: 0xc9a227, transparent: true });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(pos);
+    mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+
+    const vel = new THREE.Vector3()
+      .addScaledVector(right, 1.7 + Math.random() * 0.9)   // flicks right
+      .addScaledVector(up,    1.3 + Math.random() * 0.7)   // and up
+      .addScaledVector(fwd,  -0.3 + Math.random() * 0.3);
+
+    this._particles.push({
+      mesh, vel,
+      rotV: new THREE.Vector3(
+        (Math.random() - 0.5) * 34, (Math.random() - 0.5) * 34, (Math.random() - 0.5) * 34
+      ),
+      age: 0, maxAge: 2.4, fadeDur: 0.5, gravity: 9.8, bounce: true, floorY: 0.012,
+    });
+    this.scene.add(mesh);
+  }
+
+  // ── Concrete chunk debris (bigger rigid pieces, bounce off floor) ─────────
+  _spawnChunks(position) {
+    const count = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < count; i++) {
+      const s   = 0.04 + Math.random() * 0.06;
+      const geo = new THREE.BoxGeometry(s * (0.7 + Math.random()), s * (0.7 + Math.random()), s * (0.7 + Math.random()));
+      const mat = new THREE.MeshLambertMaterial({
+        color: new THREE.Color().setHSL(0, 0, 0.34 + Math.random() * 0.22), transparent: true,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(position);
+
+      const theta = Math.random() * Math.PI * 2;
+      const spd   = 1.2 + Math.random() * 2.2;
+      this._particles.push({
+        mesh,
+        vel: new THREE.Vector3(Math.cos(theta) * spd, 1.0 + Math.random() * 2.0, Math.sin(theta) * spd),
+        rotV: new THREE.Vector3(
+          (Math.random() - 0.5) * 18, (Math.random() - 0.5) * 18, (Math.random() - 0.5) * 18
+        ),
+        age: 0, maxAge: 1.6, fadeDur: 0.45, gravity: 9.8, bounce: true, floorY: 0.02,
+      });
+      this.scene.add(mesh);
+    }
+  }
+
   // ── Concrete chip debris ──────────────────────────────────────────────────
   _spawnChips(position) {
     const count = 5 + Math.floor(Math.random() * 5);
@@ -286,12 +346,22 @@ export class Game {
         this._particles.splice(i, 1);
         continue;
       }
-      p.vel.y -= 9.8 * dt;
+      p.vel.y -= (p.gravity ?? 9.8) * dt;
       p.mesh.position.addScaledVector(p.vel, dt);
+
+      // Floor bounce for rigid debris (shells, chunks)
+      if (p.bounce && p.mesh.position.y <= p.floorY) {
+        p.mesh.position.y = p.floorY;
+        if (p.vel.y < 0) {
+          p.vel.y *= -0.32; p.vel.x *= 0.55; p.vel.z *= 0.55;
+          p.rotV.multiplyScalar(0.5);
+        }
+      }
+
       p.mesh.rotation.x += p.rotV.x * dt;
       p.mesh.rotation.y += p.rotV.y * dt;
       p.mesh.rotation.z += p.rotV.z * dt;
-      p.mesh.material.opacity = 1 - p.age / p.maxAge;
+      p.mesh.material.opacity = Math.min(1, (p.maxAge - p.age) / (p.fadeDur ?? p.maxAge));
     }
   }
 
@@ -355,7 +425,8 @@ export class Game {
             overrides
           );
           if (wall.type === 'concrete') {
-            this._spawnChips(new THREE.Vector3().fromArray(msg.hitPoint));
+            const cp = new THREE.Vector3().fromArray(msg.hitPoint);
+            this._spawnChunks(cp); this._spawnChips(cp);
           }
         }
       }

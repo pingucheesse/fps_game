@@ -12,9 +12,11 @@ export class DestructibleWall {
     height   = 3,
     position = new THREE.Vector3(),
     rotation = new THREE.Euler(),
+    indestructible = false,
   } = {}) {
     this.id   = `wall_${_idCounter++}`;
     this.type = type;
+    this._indestructible = indestructible;
 
     const p = WALL_TYPES[type] ?? WALL_TYPES.medium;
     this._params = p;
@@ -86,15 +88,18 @@ export class DestructibleWall {
     this._culledCount = 0;
     this._passable    = false;
 
-    // Single DoubleSide material — guaranteed visible from every angle regardless
-    // of wall rotation. MirrorMap culling ensures holes punch through both faces.
-    // A per-type surface texture is tiled by world size so every face (front,
-    // back, sides, hole interiors) reads as a real surface in any lighting.
-    const tex = getWallTexture(type).clone();
-    tex.needsUpdate = true;
+    // Bake size-based tiling into the UVs so every wall can SHARE one texture
+    // per material type (big perf win: ~3 textures instead of one per wall),
+    // while keeping a consistent texel density on every face.
+    const uv = this.geo.attributes.uv;
     const TILE = 1.6; // metres per texture tile
-    tex.repeat.set(Math.max(1, width / TILE), Math.max(1, height / TILE));
-    const mat = new THREE.MeshLambertMaterial({ map: tex, color: 0xffffff, side: THREE.DoubleSide });
+    const ru = Math.max(1, width / TILE), rv = Math.max(1, height / TILE);
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * ru, uv.getY(i) * rv);
+    uv.needsUpdate = true;
+
+    // Single DoubleSide material — visible from every angle regardless of wall
+    // rotation; the shared texture tiles via the baked UVs above.
+    const mat = new THREE.MeshLambertMaterial({ map: getWallTexture(type), side: THREE.DoubleSide });
     this.mesh = new THREE.Mesh(this.geo, mat);
     this.mesh.position.z    = 0; // centred on the def position so geometry matches
                                  // the (centred) footprints the overlap resolver uses
@@ -113,6 +118,8 @@ export class DestructibleWall {
 
   // ── Hit application ─────────────────────────────────────────────────────────
   applyHit(worldPoint, rayDir, overrides = {}) {
+    if (this._indestructible) return; // solid perimeter — only sparks/chips (handled by Game)
+
     const p = overrides && Object.keys(overrides).length
       ? Object.assign({}, this._params, overrides)
       : this._params;
@@ -169,8 +176,12 @@ export class DestructibleWall {
   // at the same world position, and vice versa, with no mirroring artefact.
   _cullTriangles() {
     const idx     = this.geo.index;
-    const { threshold, passThreshold } = this._params;
+    const { threshold, passThreshold, independentCull } = this._params;
     const mm      = this._mirrorMap;
+    // Thick walls (concrete) chip each face independently: a chunk taken out of
+    // the front leaves the back face intact, so the wall reads as a solid block
+    // with a bite missing rather than punching straight through.
+    const xface = !independentCull;
 
     // Front face (+Z)
     const frontEnd = this._frontIdxStart + this._frontIdxCount;
@@ -179,10 +190,9 @@ export class DestructibleWall {
       const a = idx.getX(t)     - this._frontStart;
       const b = idx.getX(t + 1) - this._frontStart;
       const c = idx.getX(t + 2) - this._frontStart;
-      // Cull if own damage OR matching back-face damage (at same world pos) exceeds threshold
-      const aCull = this.damage[a] >= threshold || this._damageback[mm[a]] >= threshold;
-      const bCull = this.damage[b] >= threshold || this._damageback[mm[b]] >= threshold;
-      const cCull = this.damage[c] >= threshold || this._damageback[mm[c]] >= threshold;
+      const aCull = this.damage[a] >= threshold || (xface && this._damageback[mm[a]] >= threshold);
+      const bCull = this.damage[b] >= threshold || (xface && this._damageback[mm[b]] >= threshold);
+      const cCull = this.damage[c] >= threshold || (xface && this._damageback[mm[c]] >= threshold);
       if (aCull && bCull && cCull) {
         idx.setX(t, 0); idx.setX(t + 1, 0); idx.setX(t + 2, 0);
         this._culledCount++;
@@ -196,10 +206,9 @@ export class DestructibleWall {
       const a = idx.getX(t)     - this._backStart;
       const b = idx.getX(t + 1) - this._backStart;
       const c = idx.getX(t + 2) - this._backStart;
-      // Cull if own back-face damage OR matching front-face damage exceeds threshold
-      const aCull = this._damageback[a] >= threshold || this.damage[mm[a]] >= threshold;
-      const bCull = this._damageback[b] >= threshold || this.damage[mm[b]] >= threshold;
-      const cCull = this._damageback[c] >= threshold || this.damage[mm[c]] >= threshold;
+      const aCull = this._damageback[a] >= threshold || (xface && this.damage[mm[a]] >= threshold);
+      const bCull = this._damageback[b] >= threshold || (xface && this.damage[mm[b]] >= threshold);
+      const cCull = this._damageback[c] >= threshold || (xface && this.damage[mm[c]] >= threshold);
       if (aCull && bCull && cCull) {
         idx.setX(t, 0); idx.setX(t + 1, 0); idx.setX(t + 2, 0);
       }
@@ -255,7 +264,7 @@ export class DestructibleWall {
     scene.remove(this._group);
     this._group.traverse(o => {
       if (o.geometry) o.geometry.dispose();
-      if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+      if (o.material) o.material.dispose(); // shared per-type texture is NOT disposed
     });
   }
 }

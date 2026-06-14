@@ -19,6 +19,7 @@ export class WallManager {
         height:   def.h,
         position: new THREE.Vector3(...def.pos),
         rotation: new THREE.Euler(...def.rot),
+        indestructible: !!def.fixed, // outer perimeter stays solid
       });
       this.walls.set(wall.id, wall);
       this.meshes.push(wall.mesh);

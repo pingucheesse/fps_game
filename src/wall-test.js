@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { WallManager } from './world/WallManager.js';
+import { DestructibleWall } from './world/DestructibleWall.js';
 
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -15,26 +16,38 @@ const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60),
 floor.rotation.x = -Math.PI / 2; scene.add(floor);
 
 const params = new URLSearchParams(location.search);
-const seed = params.get('seed') || 'ABC123';
-const wm = new WallManager(scene, seed);
-
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
 const view = params.get('view') || 'spawn';
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
 
-if (view === 'top') {
-  camera.position.set(0, 34, 0.01);
-  camera.lookAt(0, 0, 0);
-} else if (view === 'spawn') {
-  const s = wm.spawnPoints[0];
-  camera.position.set(s.x, 1.6, s.z);
-  camera.lookAt(0, 1.4, 0);          // look toward middle
-} else { // 'center'
-  camera.position.set(0, 1.6, 6);
-  camera.lookAt(0, 1.4, 0);
+let label = '';
+
+if (view === 'concrete') {
+  // Hammer a concrete wall with sustained fire and see it chip into chunks.
+  const wall = new DestructibleWall(scene, {
+    type: 'concrete', width: 4, height: 3,
+    position: new THREE.Vector3(0, 1.5, 0), rotation: new THREE.Euler(0, 0, 0),
+  });
+  const dir = new THREE.Vector3(0, 0, -1);
+  let shots = 0;
+  for (let k = 0; k < 45; k++) {
+    const cx = (Math.random() - 0.5) * 0.6;     // focused fire in a ~0.6 m patch
+    const cy = 1.5 + (Math.random() - 0.5) * 0.5;
+    wall.applyHit(new THREE.Vector3(cx, cy, 0.15), dir, {});
+    shots++;
+  }
+  label = `concrete wall after ${shots} shots (front view)`;
+  camera.position.set(0.6, 1.7, 4.5);
+  camera.lookAt(0, 1.5, 0);
+} else {
+  const seed = params.get('seed') || 'ABC123';
+  const wm = new WallManager(scene, seed);
+  if (view === 'top') { camera.position.set(0, 36, 0.01); camera.lookAt(0, 0, 0); }
+  else if (view === 'spawn') { const s = wm.spawnPoints[0]; camera.position.set(s.x, 1.6, s.z); camera.lookAt(0, 1.4, 0); }
+  else { camera.position.set(0, 1.6, 6); camera.lookAt(0, 1.4, 0); }
+  label = `seed=${seed} style=${wm.style} walls=${wm.meshes.length} view=${view}`;
 }
 
-document.getElementById('label').textContent =
-  `seed=${seed} style=${wm.style} walls=${wm.meshes.length} view=${view}`;
+document.getElementById('label').textContent = label;
 
 let frames = 0;
 function loop() {
