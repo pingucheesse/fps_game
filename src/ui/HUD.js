@@ -11,9 +11,18 @@ export class HUD {
     this._notifEl     = document.getElementById('notification');
     this._hitMarkerEl = document.getElementById('hit-marker');
     this._scoreEl     = document.getElementById('score-display');
+    this._ammoEl      = document.getElementById('ammo-display');
     this._hitAlpha    = 0;
     this._notifTimer  = null;
     this._hmTimer     = null;
+  }
+
+  setAmmo(cur, max, reloading = false) {
+    if (!this._ammoEl) return;
+    this._ammoEl.textContent = reloading ? 'RELOAD' : `${cur} / ${max}`;
+    this._ammoEl.style.color = reloading ? '#3aa0ff'
+      : cur <= 2 ? '#e53935' : 'rgba(255,255,255,0.88)';
+    this._ammoEl.style.display = 'block';
   }
 
   setPeerCount(n) {

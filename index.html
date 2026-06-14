@@ -105,6 +105,14 @@
       color: rgba(255,255,255,0.35); font-size: 0.75rem; letter-spacing: 0.1em;
     }
 
+    /* ── Ammo ── */
+    #ammo-display {
+      position: absolute; bottom: 1.5rem; right: 1.6rem;
+      color: rgba(255,255,255,0.88); font-size: 1.4rem; letter-spacing: 0.12em;
+      font-family: 'Consolas', monospace; font-weight: 600; pointer-events: none;
+      text-shadow: 0 1px 5px rgba(0,0,0,0.75); display: none;
+    }
+
     /* ── Minimap ── */
     #minimap {
       position: absolute; top: 12px; left: 12px;
@@ -258,6 +266,7 @@
     <div id="room-code-hud"></div>
     <div id="notification"></div>
     <div id="crosshair"></div>
+    <div id="ammo-display"></div>
     <div id="peer-count"></div>
     <div id="lock-hint">Click to aim · WASD · LMB shoot · C crouch · Q/E lean · V knife</div>
     <div id="score-display"></div>

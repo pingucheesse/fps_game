@@ -15,6 +15,11 @@ const HEAD_DMG  = 40;
 const KNIFE_DMG = 60;
 const KNIFE_RANGE = 1.5; // metres
 
+const MAX_AMMO     = 10;
+const RELOAD_MS    = 800;   // full reload (particles pull back into a gun)
+const REGEN_IDLE_S = 1.0;   // idle time before slow ammo regen kicks in
+const REGEN_EVERY_S = 0.6;  // one round restored every this many seconds
+
 // Knife wall-damage — no sigma override; uses wall's natural hole size
 const KNIFE_WALL = { strength: 0.9, maxDisplace: 0.003 };
 
@@ -60,6 +65,14 @@ export class Game {
     this._syncAccum = 0;
     this._prevTime  = 0;
     this._particles = [];
+
+    // Ammo
+    this._ammo       = MAX_AMMO;
+    this._reloading  = false;
+    this._lastShotAt = 0;
+    this._regenAccum = 0;
+    this.localPlayer.gun.setAmmoFraction(1);
+    this.hud.setAmmo(this._ammo, MAX_AMMO);
 
     // Drop the local player at a spawn point for the generated map
     this.localPlayer.respawn(this._pickSpawn(this._remotePositions()));
@@ -150,11 +163,21 @@ export class Game {
 
   // ── Gun fire ──────────────────────────────────────────────────────────────
   _fire() {
+    if (this._reloading) return;
+    if (this._ammo <= 0) { this._startReload(); return; }
     if (!this.localPlayer.gun.canFire) return;
 
     const result = this.raycast.fire(this.localPlayer.camera, this.remotePlayers);
     if (!this.localPlayer.gun.fire()) return;
     this._spawnShell();
+
+    // Consume a round — shed part of the gun as blue particles
+    this._ammo--;
+    this._lastShotAt = performance.now();
+    this._regenAccum = 0;
+    this.localPlayer.gun.setAmmoFraction(this._ammo / MAX_AMMO);
+    this._spawnGunDissolve();
+    this.hud.setAmmo(this._ammo, MAX_AMMO);
 
     let tracerEnd;
     if (result.playerHit)  tracerEnd = result.hitPoint.clone();
@@ -189,6 +212,64 @@ export class Game {
       }
       this.net.send(msg);
     }
+
+    if (this._ammo <= 0) this._startReload();
+  }
+
+  // ── Ammo: reload (particles pull together → reform the gun) ────────────────
+  _startReload() {
+    if (this._reloading) return;
+    this._reloading = true;
+    this.hud.setAmmo(0, MAX_AMMO, true);
+    this.localPlayer.gun.setAmmoFraction(0.05);
+    this._spawnGunReform(18);
+    setTimeout(() => {
+      this._ammo = MAX_AMMO;
+      this._reloading = false;
+      this.localPlayer.gun.setAmmoFraction(1);
+      this.hud.setAmmo(this._ammo, MAX_AMMO);
+    }, RELOAD_MS);
+  }
+
+  // Blue particles shed from the gun on each shot (spread outward)
+  _spawnGunDissolve(count = 7) {
+    const pos = new THREE.Vector3();
+    this.localPlayer.gun.muzzlePoint.getWorldPosition(pos);
+    for (let i = 0; i < count; i++) {
+      const s    = 0.008 + Math.random() * 0.01;
+      const geo  = new THREE.BoxGeometry(s, s, s);
+      const mat  = new THREE.MeshBasicMaterial({ color: 0x3aa0ff, transparent: true, opacity: 0.95, depthWrite: false });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(pos).add(new THREE.Vector3((Math.random() - 0.5) * 0.05, (Math.random() - 0.5) * 0.05, (Math.random() - 0.5) * 0.05));
+      const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.6 + 0.1, Math.random() - 0.5).normalize();
+      this._particles.push({
+        mesh, vel: dir.multiplyScalar(0.6 + Math.random() * 0.9),
+        rotV: new THREE.Vector3((Math.random() - 0.5) * 9, (Math.random() - 0.5) * 9, (Math.random() - 0.5) * 9),
+        age: 0, maxAge: 0.5 + Math.random() * 0.3, fadeDur: 0.4, gravity: 0,
+      });
+      this.scene.add(mesh);
+    }
+  }
+
+  // Blue particles converging back into the gun (reload / regen)
+  _spawnGunReform(count = 16) {
+    const pos = new THREE.Vector3();
+    this.localPlayer.gun.muzzlePoint.getWorldPosition(pos);
+    for (let i = 0; i < count; i++) {
+      const off  = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5)
+        .normalize().multiplyScalar(0.22 + Math.random() * 0.35);
+      const s    = 0.008 + Math.random() * 0.01;
+      const geo  = new THREE.BoxGeometry(s, s, s);
+      const mat  = new THREE.MeshBasicMaterial({ color: 0x3aa0ff, transparent: true, opacity: 0.95, depthWrite: false });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(pos).add(off);
+      this._particles.push({
+        mesh, vel: off.clone().multiplyScalar(-4),  // inward → converges on the gun
+        rotV: new THREE.Vector3((Math.random() - 0.5) * 9, (Math.random() - 0.5) * 9, (Math.random() - 0.5) * 9),
+        age: 0, maxAge: 0.42, fadeDur: 0.28, gravity: 0,
+      });
+      this.scene.add(mesh);
+    }
   }
 
   // ── Quick melee (V) — shows knife briefly, auto-returns to gun ───────────
@@ -206,7 +287,7 @@ export class Game {
     // Player hit (melee range)
     let hitPlayer = false;
     for (const [peerId, rp] of this.remotePlayers) {
-      const res = this.raycast._playerHit(origin, dir, rp.group.position, KNIFE_RANGE, rp._crouching);
+      const res = this.raycast._playerHit(origin, dir, rp, KNIFE_RANGE);
       if (res) {
         this.hud.showHitMarker(false);
         this._spawnSparks(res.point, false);
@@ -582,6 +663,19 @@ export class Game {
     for (const rp of this.remotePlayers.values()) rp.update(dt);
     this._updateParticles(dt);
     this.hud.update(dt);
+
+    // Passive ammo regen: after a short idle, slowly trickle rounds back in
+    if (!this._reloading && this._ammo > 0 && this._ammo < MAX_AMMO &&
+        performance.now() - this._lastShotAt > REGEN_IDLE_S * 1000) {
+      this._regenAccum += dt;
+      if (this._regenAccum >= REGEN_EVERY_S) {
+        this._regenAccum = 0;
+        this._ammo++;
+        this.localPlayer.gun.setAmmoFraction(this._ammo / MAX_AMMO);
+        this._spawnGunReform(5);
+        this.hud.setAmmo(this._ammo, MAX_AMMO);
+      }
+    }
 
     const mpos = this.localPlayer.getPosition();
     this.minimap.update(mpos.x, mpos.z, this.localPlayer.getYaw());

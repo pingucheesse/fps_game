@@ -24,7 +24,7 @@ export class Raycast {
 
     if (remotePlayers) {
       for (const [peerId, rp] of remotePlayers) {
-        const res = this._playerHit(origin, rayDir, rp.group.position, wallDist, rp._crouching);
+        const res = this._playerHit(origin, rayDir, rp, wallDist);
         if (res) {
           return { origin, rayDir, hit: false, playerHit: true, peerId, hitType: res.type, hitPoint: res.point };
         }
@@ -42,16 +42,29 @@ export class Raycast {
     return { origin, rayDir, hit: true, wallId, point: h.point };
   }
 
-  _playerHit(origin, direction, feetPos, maxDist, crouching) {
+  _playerHit(origin, direction, rp, maxDist) {
+    const crouching = rp._crouching;
+    const feet = rp.group.position;
+    const yaw  = rp.group.rotation.y;
+    const phi  = rp._leanAngle || 0;           // lean roll → hitbox follows the body
+    const sinP = Math.sin(phi), cosP = Math.cos(phi);
+    const cosY = Math.cos(yaw),  sinY = Math.sin(yaw);
+
     const eyeH = crouching ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
     const checks = [
       { dy: eyeH,          r: crouching ? 0.22 : 0.30, type: 'head' },
       { dy: eyeH * 0.45,  r: crouching ? 0.26 : 0.42, type: 'body' },
     ];
     for (const { dy, r, type } of checks) {
-      const centre = new THREE.Vector3(feetPos.x, feetPos.y + dy, feetPos.z);
-      const toC    = centre.clone().sub(origin);
-      const t      = toC.dot(direction);
+      // Body point (0,dy,0) rolled by the lean then yawed into world — matches the visual
+      const lx = -dy * sinP, ly = dy * cosP;
+      const centre = new THREE.Vector3(
+        feet.x + lx * cosY,
+        feet.y + ly,
+        feet.z - lx * sinY
+      );
+      const toC = centre.clone().sub(origin);
+      const t   = toC.dot(direction);
       if (t < 0 || t > maxDist) continue;
       const closest = origin.clone().addScaledVector(direction, t);
       if (closest.distanceTo(centre) < r) return { type, point: closest };

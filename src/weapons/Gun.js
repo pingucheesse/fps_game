@@ -1,8 +1,5 @@
 import * as THREE from 'three';
 
-const GREY = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
-const DARK = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
-
 // Everything shares one rear reference (z = REAR) and the muzzle (z = MUZZLE),
 // so the back of the slide, the frame and the grip backstrap all line up.
 const REAR   =  0.05;
@@ -20,6 +17,11 @@ const SLIDE_BACK_FRAC  = SLIDE_BACK_DUR / SLIDE_CYCLE;
 export class Gun {
   constructor(camera) {
     const group = new THREE.Group();
+
+    // Per-instance materials so the ammo dissolve only affects THIS gun
+    const GREY = new THREE.MeshLambertMaterial({ color: 0x2a2a2a, transparent: true });
+    const DARK = new THREE.MeshLambertMaterial({ color: 0x1a1a1a, transparent: true });
+    this._mats = [GREY, DARK];
 
     // Slide (top) — rear at REAR, front at the muzzle; covers the barrel at rest
     const slide = new THREE.Mesh(new THREE.BoxGeometry(0.030, 0.030, SLIDE_LEN), GREY);
@@ -70,6 +72,17 @@ export class Gun {
   get visible()  { return this._group.visible; }
   set visible(v) { this._group.visible = v; }
   get canFire()  { return this._slideT <= 0; }
+
+  // Ammo fraction 0..1 → the gun fades out and glows blue as it depletes
+  // (the "turning into blue particles" look), solid again at full / after reload.
+  setAmmoFraction(f) {
+    const op   = 0.25 + 0.75 * Math.max(0, Math.min(1, f));
+    const blue = 1 - Math.max(0, Math.min(1, f));
+    for (const m of this._mats) {
+      m.opacity = op;
+      m.emissive.setRGB(0.08 * blue, 0.35 * blue, 0.85 * blue);
+    }
+  }
 
   fire() {
     if (!this.canFire) return false;
