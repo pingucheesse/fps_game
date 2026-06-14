@@ -106,6 +106,7 @@ export class RemotePlayer {
     this._initialized = false;
     this._leanAngle = 0;
     this._eyeY      = EYE_HEIGHT;
+    this._bodyScale = 1;
   }
 
   updateState(msg) {
@@ -133,9 +134,17 @@ export class RemotePlayer {
     this._leanAngle += (leanTarget - this._leanAngle) * Math.min(1, dt * 10);
     this._leanPivot.rotation.z = this._leanAngle;
 
+    const k = Math.min(1, dt * 10);
     const targetEyeY = this._crouching ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
-    this._eyeY += (targetEyeY - this._eyeY) * Math.min(1, dt * 10);
+    this._eyeY += (targetEyeY - this._eyeY) * k;
     this._pitchObj.position.y = this._eyeY;
+
+    // Body shrinks when crouching (capsule scales from the feet); gun follows
+    const targetScale = this._crouching ? 0.62 : 1;
+    this._bodyScale += (targetScale - this._bodyScale) * k;
+    this._body.scale.y    = this._bodyScale;
+    this._body.position.y = (BODY_TOTAL / 2) * this._bodyScale;
+    this._gun.position.y  = this._eyeY * 0.75;
   }
 
   dispose(scene) {

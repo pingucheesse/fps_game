@@ -62,15 +62,34 @@ export class Game {
     this._particles = [];
 
     // Drop the local player at a spawn point for the generated map
-    this.localPlayer.respawn(this._randomSpawn());
+    this.localPlayer.respawn(this._pickSpawn(this._remotePositions()));
 
     this._bindInput();
     this._setupNet();
   }
 
-  _randomSpawn() {
+  // World positions of the other players currently in the match.
+  _remotePositions() {
+    return [...this.remotePlayers.values()]
+      .filter(rp => rp._initialized)
+      .map(rp => rp.group.position);
+  }
+
+  // Pick a spawn point. With opponents present, choose the one whose nearest
+  // opponent is farthest away → you spawn on the opposite side of the map.
+  _pickSpawn(awayFrom = []) {
     const pts = this.wallManager.spawnPoints;
-    return pts[Math.floor(Math.random() * pts.length)].clone();
+    if (awayFrom.length === 0) return pts[Math.floor(Math.random() * pts.length)].clone();
+    let best = pts[0], bestScore = -Infinity;
+    for (const p of pts) {
+      let nearest = Infinity;
+      for (const q of awayFrom) {
+        const d = (p.x - q.x) ** 2 + (p.z - q.z) ** 2;
+        if (d < nearest) nearest = d;
+      }
+      if (nearest > bestScore) { bestScore = nearest; best = p; }
+    }
+    return best.clone();
   }
 
   _clearParticles() {
@@ -90,10 +109,12 @@ export class Game {
     this.hp    = MAX_HP;
     this.armor = MAX_ARMOR;
     this.hud.setHealth(this.hp, this.armor);
-    this.localPlayer.respawn(this._randomSpawn());
+    const localSpawn = this._pickSpawn(this._remotePositions());
+    this.localPlayer.respawn(localSpawn);
 
+    // Place opponents on the far side from where we just spawned
     for (const rp of this.remotePlayers.values()) {
-      const spawn = this._randomSpawn();
+      const spawn = this._pickSpawn([localSpawn]);
       rp.group.position.copy(spawn);
       rp._targetPos.copy(spawn);
     }
@@ -451,7 +472,7 @@ export class Game {
 
     this.hp    = MAX_HP;
     this.armor = MAX_ARMOR;
-    this.localPlayer.respawn(this._randomSpawn());
+    this.localPlayer.respawn(this._pickSpawn(this._remotePositions()));
     this.hud.setHealth(this.hp, this.armor);
   }
 

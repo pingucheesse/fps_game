@@ -64,11 +64,17 @@ export class LocalPlayer {
     const lerp = Math.min(1, dt * 10);
     const targetEyeY = this.isCrouching ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
     this._eyeY += (targetEyeY - this._eyeY) * lerp;
-    this.pitchObj.position.y = this._eyeY;
 
     const leanTarget = this.controller.lean * LEAN_MAX;
     this._leanAngle += (leanTarget - this._leanAngle) * lerp;
-    this.leanPivot.rotation.z = -this._leanAngle;
+
+    // Peek: the head swings in an arc from the feet (position offset), and the
+    // view rolls. Crucially the roll is applied to the CAMERA — AFTER yaw/pitch —
+    // so leaning never couples into mouse look (which was throwing the aim off).
+    const a = this._leanAngle;
+    this.pitchObj.position.set(Math.sin(a) * this._eyeY, Math.cos(a) * this._eyeY, 0);
+    this.leanPivot.rotation.z = 0;
+    this.camera.rotation.z = -a;
   }
 
   getPosition() { return this.yawObj.position.clone(); }
