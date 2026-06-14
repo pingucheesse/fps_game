@@ -177,7 +177,6 @@ export class Game {
     this._lastShotAt = performance.now();
     this._regenAccum = 0;
     this.localPlayer.gun.setAmmoFraction(this._ammo / MAX_AMMO);
-    this._spawnGunDissolve();
     this.hud.setAmmo(this._ammo, MAX_AMMO);
 
     let tracerEnd;
@@ -222,51 +221,8 @@ export class Game {
     if (this._reloading) return;
     this._reloading   = true;
     this._reloadStart = performance.now();
-    this._reloadWave  = 1;
     this.hud.setAmmo(0, MAX_AMMO, true);
     this.localPlayer.gun.setAmmoFraction(0.05);
-    this._spawnGunReform(18);
-  }
-
-  // Blue particles shed from the gun on each shot (spread outward)
-  _spawnGunDissolve(count = 7) {
-    const pos = new THREE.Vector3();
-    this.localPlayer.gun.muzzlePoint.getWorldPosition(pos);
-    for (let i = 0; i < count; i++) {
-      const s    = 0.008 + Math.random() * 0.01;
-      const geo  = new THREE.BoxGeometry(s, s, s);
-      const mat  = new THREE.MeshBasicMaterial({ color: 0x3aa0ff, transparent: true, opacity: 0.95, depthWrite: false });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.copy(pos).add(new THREE.Vector3((Math.random() - 0.5) * 0.05, (Math.random() - 0.5) * 0.05, (Math.random() - 0.5) * 0.05));
-      const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.6 + 0.1, Math.random() - 0.5).normalize();
-      this._particles.push({
-        mesh, vel: dir.multiplyScalar(0.6 + Math.random() * 0.9),
-        rotV: new THREE.Vector3((Math.random() - 0.5) * 9, (Math.random() - 0.5) * 9, (Math.random() - 0.5) * 9),
-        age: 0, maxAge: 0.5 + Math.random() * 0.3, fadeDur: 0.4, gravity: 0,
-      });
-      this.scene.add(mesh);
-    }
-  }
-
-  // Blue particles converging back into the gun (reload / regen)
-  _spawnGunReform(count = 16) {
-    const pos = new THREE.Vector3();
-    this.localPlayer.gun.muzzlePoint.getWorldPosition(pos);
-    for (let i = 0; i < count; i++) {
-      const off  = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5)
-        .normalize().multiplyScalar(0.22 + Math.random() * 0.35);
-      const s    = 0.008 + Math.random() * 0.01;
-      const geo  = new THREE.BoxGeometry(s, s, s);
-      const mat  = new THREE.MeshBasicMaterial({ color: 0x3aa0ff, transparent: true, opacity: 0.95, depthWrite: false });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.copy(pos).add(off);
-      this._particles.push({
-        mesh, vel: off.clone().multiplyScalar(-4),  // inward → converges on the gun
-        rotV: new THREE.Vector3((Math.random() - 0.5) * 9, (Math.random() - 0.5) * 9, (Math.random() - 0.5) * 9),
-        age: 0, maxAge: 0.42, fadeDur: 0.28, gravity: 0,
-      });
-      this.scene.add(mesh);
-    }
   }
 
   // ── Quick melee (V) — shows knife briefly, auto-returns to gun ───────────
@@ -662,10 +618,9 @@ export class Game {
     this.hud.update(dt);
 
     if (this._reloading) {
-      // Pull particles together and reform the gun gradually over RELOAD_MS
+      // Reform the gun gradually over RELOAD_MS — faded particles grow back and
+      // ride the scatter home as the magazine refills.
       const pr = (performance.now() - this._reloadStart) / RELOAD_MS;
-      if (pr > 0.4  && this._reloadWave === 1) { this._spawnGunReform(14); this._reloadWave = 2; }
-      if (pr > 0.75 && this._reloadWave === 2) { this._spawnGunReform(14); this._reloadWave = 3; }
       this.localPlayer.gun.setAmmoFraction(0.05 + 0.95 * Math.min(1, pr));
       if (pr >= 1) {
         this._ammo = MAX_AMMO;
@@ -681,7 +636,6 @@ export class Game {
         this._regenAccum = 0;
         this._ammo++;
         this.localPlayer.gun.setAmmoFraction(this._ammo / MAX_AMMO);
-        this._spawnGunReform(5);
         this.hud.setAmmo(this._ammo, MAX_AMMO);
       }
     }

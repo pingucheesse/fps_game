@@ -24,6 +24,9 @@ const PARTICLE_COUNT = 2800;
 const SLIDE_PART = 0; // index of the slide box in PART_BOXES (it racks back on fire)
 
 const _m4 = new THREE.Matrix4();
+const _v  = new THREE.Vector3();
+const _s  = new THREE.Vector3();
+const _q  = new THREE.Quaternion();
 
 export class Gun {
   constructor(camera) {
@@ -49,6 +52,7 @@ export class Gun {
     this._slideT      = 0;
     this._time        = 0;
     this._spread      = 0;
+    this._frac        = 1;
 
     this._buildCloud();
   }
@@ -82,6 +86,9 @@ export class Gun {
       // morphs, so it disperses into a wispy, less-defined gun instead of a
       // tight blob. The rest stay close and hold the gun's shape.
       const stray = Math.random() < 0.28;
+      // ~half the particles fade out below their dropAt ammo fraction (so the
+      // more you shoot, the more vanish); the rest never fade and hold the shape.
+      const fader = Math.random() < 0.5;
       this._pts.push({
         base,
         part: pi,
@@ -89,6 +96,8 @@ export class Gun {
         phase: new THREE.Vector3(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28),
         freq:  (stray ? 0.8 : 1.5) + Math.random() * 2.2,
         amp:   stray ? 0.012 + Math.random() * 0.02 : 0.003 + Math.random() * 0.004,
+        dropAt:   fader ? 0.05 + Math.random() * 0.45 : -1, // -1 = never fades
+        presence: 1,
       });
       _m4.makeTranslation(base.x, base.y, base.z);
       this._inst.setMatrixAt(i, _m4);
@@ -109,6 +118,7 @@ export class Gun {
     const morph = Math.max(0, Math.min(1, (MORPH_START - f) / MORPH_START));
     this._mat.color.setRGB(0.04 + 0.25 * morph, 0.05 + 0.61 * morph, 0.06 + 0.94 * morph);
     this._spread = morph;
+    this._frac   = f; // drives per-particle fade
   }
 
   fire() {
@@ -140,19 +150,26 @@ export class Gun {
         : (1 - (frac - SLIDE_BACK_FRAC) / (1 - SLIDE_BACK_FRAC)) * SLIDE_TRAVEL;
     }
 
-    // Position every instance: home when full, scattered + floating as it empties;
-    // the slide particles also rack backwards while firing.
+    // Position every instance (parented to the gun, so it follows you): home when
+    // full, scattered + floating as it empties, slide particles racking back. Each
+    // fader particle shrinks to nothing below its dropAt and grows back on reload,
+    // then rides the scatter home as the magazine refills.
     const t = this._time += dt;
-    const sp = this._spread;
+    const sp = this._spread, fr = this._frac, fade = Math.min(1, dt * 6);
     const pts = this._pts, inst = this._inst;
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i];
+      const target = fr >= p.dropAt ? 1 : 0;
+      p.presence += (target - p.presence) * fade;
       const slz = p.part === SLIDE_PART ? slideOffset : 0;
-      _m4.makeTranslation(
+      _v.set(
         p.base.x + p.scatter.x * sp + Math.sin(t * p.freq        + p.phase.x) * p.amp * sp,
         p.base.y + p.scatter.y * sp + Math.sin(t * p.freq * 1.13 + p.phase.y) * p.amp * sp,
         p.base.z + slz + p.scatter.z * sp + Math.sin(t * p.freq * 0.87 + p.phase.z) * p.amp * sp,
       );
+      const s = p.presence;
+      _s.set(s, s, s);
+      _m4.compose(_v, _q, _s);
       inst.setMatrixAt(i, _m4);
     }
     inst.instanceMatrix.needsUpdate = true;
