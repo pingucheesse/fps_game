@@ -16,7 +16,7 @@ const KNIFE_DMG = 60;
 const KNIFE_RANGE = 1.5; // metres
 
 const MAX_AMMO     = 10;
-const RELOAD_MS    = 800;   // full reload (particles pull back into a gun)
+const RELOAD_MS    = 1700;  // full reload (particles pull back into a gun)
 const REGEN_IDLE_S = 1.0;   // idle time before slow ammo regen kicks in
 const REGEN_EVERY_S = 0.6;  // one round restored every this many seconds
 
@@ -219,16 +219,12 @@ export class Game {
   // ── Ammo: reload (particles pull together → reform the gun) ────────────────
   _startReload() {
     if (this._reloading) return;
-    this._reloading = true;
+    this._reloading   = true;
+    this._reloadStart = performance.now();
+    this._reloadWave  = 1;
     this.hud.setAmmo(0, MAX_AMMO, true);
     this.localPlayer.gun.setAmmoFraction(0.05);
     this._spawnGunReform(18);
-    setTimeout(() => {
-      this._ammo = MAX_AMMO;
-      this._reloading = false;
-      this.localPlayer.gun.setAmmoFraction(1);
-      this.hud.setAmmo(this._ammo, MAX_AMMO);
-    }, RELOAD_MS);
   }
 
   // Blue particles shed from the gun on each shot (spread outward)
@@ -664,9 +660,21 @@ export class Game {
     this._updateParticles(dt);
     this.hud.update(dt);
 
-    // Passive ammo regen: after a short idle, slowly trickle rounds back in
-    if (!this._reloading && this._ammo > 0 && this._ammo < MAX_AMMO &&
-        performance.now() - this._lastShotAt > REGEN_IDLE_S * 1000) {
+    if (this._reloading) {
+      // Pull particles together and reform the gun gradually over RELOAD_MS
+      const pr = (performance.now() - this._reloadStart) / RELOAD_MS;
+      if (pr > 0.4  && this._reloadWave === 1) { this._spawnGunReform(14); this._reloadWave = 2; }
+      if (pr > 0.75 && this._reloadWave === 2) { this._spawnGunReform(14); this._reloadWave = 3; }
+      this.localPlayer.gun.setAmmoFraction(0.05 + 0.95 * Math.min(1, pr));
+      if (pr >= 1) {
+        this._ammo = MAX_AMMO;
+        this._reloading = false;
+        this.localPlayer.gun.setAmmoFraction(1);
+        this.hud.setAmmo(this._ammo, MAX_AMMO);
+      }
+    } else if (this._ammo > 0 && this._ammo < MAX_AMMO &&
+               performance.now() - this._lastShotAt > REGEN_IDLE_S * 1000) {
+      // Passive regen: after a short idle, slowly trickle rounds back in
       this._regenAccum += dt;
       if (this._regenAccum >= REGEN_EVERY_S) {
         this._regenAccum = 0;

@@ -18,10 +18,10 @@ export class Gun {
   constructor(camera) {
     const group = new THREE.Group();
 
-    // Per-instance materials so the ammo dissolve only affects THIS gun
-    const GREY = new THREE.MeshLambertMaterial({ color: 0x2a2a2a, transparent: true });
-    const DARK = new THREE.MeshLambertMaterial({ color: 0x1a1a1a, transparent: true });
-    this._mats = [GREY, DARK];
+    // The gun is rendered entirely as a particle cloud; the solid part meshes are
+    // built only to define the shape (sampled in _buildShapeCloud) then hidden.
+    const GREY = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+    const DARK = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
 
     // Slide (top) — rear at REAR, front at the muzzle; covers the barrel at rest
     const slide = new THREE.Mesh(new THREE.BoxGeometry(0.030, 0.030, SLIDE_LEN), GREY);
@@ -46,6 +46,9 @@ export class Gun {
     grip.position.set(0, -0.05, REAR - gripLen / 2);
     group.add(grip);
 
+    // Hide the solid meshes — only the particle cloud is shown
+    slide.visible = frame.visible = barrel.visible = grip.visible = false;
+
     // Muzzle flash + tracer origin (at the muzzle)
     this._flash = new THREE.PointLight(0xff9900, 0, 2.5);
     this._flash.position.set(0, 0.006, MUZZLE);
@@ -68,7 +71,7 @@ export class Gun {
     this._recoilPitch = 0;
     this._slideT      = 0;
     this._time        = 0;
-    this._pAlpha      = 0;
+    this._spread      = 0;
 
     this._buildShapeCloud();
   }
@@ -86,14 +89,13 @@ export class Gun {
     const weights = parts.map(p => p.s[0] * p.s[1] * p.s[2]);
     const wsum = weights.reduce((a, b) => a + b, 0);
 
-    this._pmat = new THREE.MeshBasicMaterial({ color: 0x4aa8ff, transparent: true, opacity: 0, depthWrite: false });
-    const pgeo = new THREE.BoxGeometry(0.0065, 0.0065, 0.0065);
+    this._pmat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.96, depthWrite: false });
+    const pgeo = new THREE.BoxGeometry(0.004, 0.004, 0.004);
     this._pcloud = new THREE.Group();
-    this._pcloud.visible = false;
     this._group.add(this._pcloud);
 
     this._shapeParts = [];
-    for (let i = 0; i < 64; i++) {
+    for (let i = 0; i < 240; i++) {
       let r = Math.random() * wsum, pi = 0;
       while (r > weights[pi] && pi < parts.length - 1) { r -= weights[pi]; pi++; }
       const p = parts[pi];
@@ -109,7 +111,7 @@ export class Gun {
         mesh, base,
         phase: new THREE.Vector3(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28),
         freq:  1.5 + Math.random() * 2.5,
-        amp:   0.003 + Math.random() * 0.005,
+        amp:   0.0025 + Math.random() * 0.004,
       });
     }
   }
@@ -118,22 +120,13 @@ export class Gun {
   set visible(v) { this._group.visible = v; }
   get canFire()  { return this._slideT <= 0; }
 
-  // Ammo fraction 0..1. From full down to ~5 rounds the gun is solid. Below that
-  // the solid mesh fades toward transparent while a gun-shaped blue particle
-  // cloud cross-fades in; by ~1 round the gun is basically just the cloud.
+  // Ammo fraction 0..1. The gun is always a particle cloud: black and tight when
+  // full, turning bluer and floating wider as it depletes (each shot lowers f).
   setAmmoFraction(f) {
     f = Math.max(0, Math.min(1, f));
-    const PARTICLE_START = 0.55; // ~5 rounds (5/10 = 0.5, with a little lead)
-    const GUN_GONE       = 0.12; // ~1 round
-    const solid = Math.max(0, Math.min(1, (f - GUN_GONE) / (PARTICLE_START - GUN_GONE)));
-    const blue  = 1 - f;
-    for (const m of this._mats) {
-      m.opacity = 0.05 + 0.95 * solid;            // ~transparent near 1 round
-      m.emissive.setRGB(0.08 * blue, 0.35 * blue, 0.85 * blue);
-    }
-    this._pAlpha = 1 - solid;
-    this._pmat.opacity   = this._pAlpha * 0.95;
-    this._pcloud.visible = this._pAlpha > 0.02;
+    const dep = 1 - f; // depletion
+    this._pmat.color.setRGB(0.29 * dep, 0.66 * dep, 1.0 * dep); // black → blue
+    this._spread = dep;
   }
 
   fire() {
@@ -167,17 +160,15 @@ export class Gun {
     }
     this._slide.position.z = SLIDE_REST + offset;
 
-    // Float the gun-shape particle cloud while it's showing
+    // Float the particle cloud — tight when full, wider as ammo depletes
     this._time += dt;
-    if (this._pcloud.visible) {
-      const t = this._time, boost = 0.6 + this._pAlpha;
-      for (const sp of this._shapeParts) {
-        sp.mesh.position.set(
-          sp.base.x + Math.sin(t * sp.freq        + sp.phase.x) * sp.amp * boost,
-          sp.base.y + Math.sin(t * sp.freq * 1.13 + sp.phase.y) * sp.amp * boost,
-          sp.base.z + Math.sin(t * sp.freq * 0.87 + sp.phase.z) * sp.amp * boost,
-        );
-      }
+    const t = this._time, boost = 0.15 + this._spread;
+    for (const sp of this._shapeParts) {
+      sp.mesh.position.set(
+        sp.base.x + Math.sin(t * sp.freq        + sp.phase.x) * sp.amp * boost,
+        sp.base.y + Math.sin(t * sp.freq * 1.13 + sp.phase.y) * sp.amp * boost,
+        sp.base.z + Math.sin(t * sp.freq * 0.87 + sp.phase.z) * sp.amp * boost,
+      );
     }
   }
 }
