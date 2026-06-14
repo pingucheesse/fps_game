@@ -21,7 +21,26 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 
 let label = '';
 
-if (view === 'concrete') {
+if (view === 'holes') {
+  // Punch a hole in a thin and a medium wall to inspect the edge smoothness.
+  const dir = new THREE.Vector3(0, 0, -1);
+  const make = (type, x, shots) => {
+    const w = new DestructibleWall(scene, {
+      type, width: 2.5, height: 2.5,
+      position: new THREE.Vector3(x, 1.25, 0), rotation: new THREE.Euler(0, 0, 0),
+    });
+    for (let k = 0; k < shots; k++) {
+      const cx = x + (Math.random() - 0.5) * 0.5;
+      const cy = 1.25 + (Math.random() - 0.5) * 0.5;
+      w.applyHit(new THREE.Vector3(cx, cy, 0.1), dir, {});
+    }
+  };
+  make('thin', -1.6, 14);
+  make('medium', 1.6, 16);
+  label = 'thin (left) + medium (right) — hole edge smoothness';
+  camera.position.set(0, 1.4, 2.4);
+  camera.lookAt(0, 1.25, 0);
+} else if (view === 'concrete') {
   // Hammer a concrete wall with sustained fire and see it chip into chunks.
   const wall = new DestructibleWall(scene, {
     type: 'concrete', width: 4, height: 3,

@@ -13,7 +13,7 @@ page.on('pageerror', e => { errors.push(e.message); console.log('  [pageerror]',
 await page.goto(`${BASE}/wall-test.html?view=top`, { waitUntil: 'load' });
 await page.waitForTimeout(800);
 
-for (const view of ['top', 'center', 'concrete']) {
+for (const view of ['top', 'center', 'concrete', 'holes']) {
   await page.goto(`${BASE}/wall-test.html?seed=ABC123&view=${view}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__ready === true, { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(300);

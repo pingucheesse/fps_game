@@ -5,6 +5,11 @@ import { getWallTexture } from './wallTextures.js';
 let _idCounter = 0;
 const _wallNormal = new THREE.Vector3();
 
+// Cap subdivisions so a map full of walls stays performant. With 4 triangles per
+// cell (for smoother holes) we keep the cap lower so the triangle budget per wall
+// stays close to the old 2-tri-per-cell geometry.
+const MAX_SEG = 46;
+
 export class DestructibleWall {
   constructor(scene, {
     type     = 'medium',
@@ -26,83 +31,129 @@ export class DestructibleWall {
     this._group.rotation.copy(rotation);
     scene.add(this._group);
 
-    // Cap subdivisions so a map full of walls stays performant.
-    const MAX_SEG = 64;
     const segsX = Math.min(Math.round(width  * p.segsPerM), MAX_SEG);
     const segsY = Math.min(Math.round(height * p.segsPerM), MAX_SEG);
+    this._segsX = segsX;
+    this._segsY = segsY;
 
-    this.geo = new THREE.BoxGeometry(width, height, p.depth, segsX, segsY, 1);
-    this.geo.attributes.position.usage = THREE.DynamicDrawUsage;
-    this.geo.index.usage               = THREE.DynamicDrawUsage;
+    // ── Start from a BoxGeometry (gives correct side faces, corner grid, UVs) ──
+    const box = new THREE.BoxGeometry(width, height, p.depth, segsX, segsY, 1);
 
-    const idxArr = this.geo.index.array;
+    // Bake size-based UV tiling so all walls share one texture per type (perf).
+    const buv = box.attributes.uv;
+    const TILE = 1.6, ru = Math.max(1, width / TILE), rv = Math.max(1, height / TILE);
+    for (let i = 0; i < buv.count; i++) buv.setXY(i, buv.getX(i) * ru, buv.getY(i) * rv);
 
-    // BoxGeometry build order: +X, -X, +Y, -Y, +Z(front), -Z(back) — no vertex sharing
-    // +X/-X : 2*(segsY+1) verts each  |  +Y/-Y : (segsX+1)*2 each
-    // +Z/-Z : (segsX+1)*(segsY+1) each  ← the two destructible faces
+    const basePos = box.attributes.position.array;
+    const baseNor = box.attributes.normal.array;
+    const baseUv  = box.attributes.uv.array;
+    const baseIdx = box.index.array;
+    const N = box.attributes.position.count;
+
     const faceCount  = (segsX + 1) * (segsY + 1);
-    const frontStart = 4 * (segsY + 1) + 4 * (segsX + 1);
+    const frontStart = 4 * (segsY + 1) + 4 * (segsX + 1); // box: +X,-X,+Y,-Y then +Z
     const backStart  = frontStart + faceCount;
-    this._frontStart  = frontStart;
-    this._backStart   = backStart;
-    this._faceCount   = faceCount;
-    this._segsX       = segsX;
-    this._segsY       = segsY;
+    const cellCount  = segsX * segsY;
 
-    const posAttr = this.geo.attributes.position;
+    this._frontStart = frontStart;
+    this._backStart  = backStart;
+    this._faceCount  = faceCount;
 
-    // Damage / displacement arrays — one per face
+    // ── Expanded vertex arrays: original verts + one centre vert per cell/face ──
+    const M   = N + 2 * cellCount;
+    const pos = new Float32Array(M * 3); pos.set(basePos);
+    const nor = new Float32Array(M * 3); nor.set(baseNor);
+    const uv  = new Float32Array(M * 2); uv.set(baseUv);
+
+    const frontCenterBase = N;
+    const backCenterBase  = N + cellCount;
+
+    // Build per-cell centre verts (position/normal/uv = average of the 4 corners)
+    // and record the 4 corner LOCAL indices for later z updates / culling.
+    const makeCenters = (cornerStart, centerBase) => {
+      const centers = new Array(cellCount);
+      for (let iy = 0; iy < segsY; iy++) {
+        for (let ix = 0; ix < segsX; ix++) {
+          const l00 = ix + iy * (segsX + 1);
+          const l10 = (ix + 1) + iy * (segsX + 1);
+          const l01 = ix + (iy + 1) * (segsX + 1);
+          const l11 = (ix + 1) + (iy + 1) * (segsX + 1);
+          const a = [cornerStart + l00, cornerStart + l10, cornerStart + l01, cornerStart + l11];
+          const cAbs = centerBase + (ix + iy * segsX);
+          for (let k = 0; k < 3; k++)
+            pos[cAbs * 3 + k] = (basePos[a[0]*3+k] + basePos[a[1]*3+k] + basePos[a[2]*3+k] + basePos[a[3]*3+k]) / 4;
+          for (let k = 0; k < 3; k++) nor[cAbs * 3 + k] = baseNor[a[0]*3+k];
+          for (let k = 0; k < 2; k++)
+            uv[cAbs * 2 + k] = (baseUv[a[0]*2+k] + baseUv[a[1]*2+k] + baseUv[a[2]*2+k] + baseUv[a[3]*2+k]) / 4;
+          centers[ix + iy * segsX] = { abs: cAbs, l00, l10, l01, l11 };
+        }
+      }
+      return centers;
+    };
+    this._frontCenters = makeCenters(frontStart, frontCenterBase);
+    this._backCenters  = makeCenters(backStart,  backCenterBase);
+
+    // ── Indices: keep the 4 side faces, re-triangulate front/back as 4 tris/cell ──
+    const sideIdx = [];
+    for (let gi = 0; gi < 4; gi++) {
+      const g = box.groups[gi];
+      for (let t = g.start; t < g.start + g.count; t++) sideIdx.push(baseIdx[t]);
+    }
+    const build4 = (cornerStart, centers) => {
+      const out = [];
+      for (const c of centers) {
+        const a00 = cornerStart + c.l00, a10 = cornerStart + c.l10;
+        const a11 = cornerStart + c.l11, a01 = cornerStart + c.l01;
+        out.push(a00, a10, c.abs,  a10, a11, c.abs,  a11, a01, c.abs,  a01, a00, c.abs);
+      }
+      return out;
+    };
+    const frontIdx = build4(frontStart, this._frontCenters);
+    const backIdx  = build4(backStart,  this._backCenters);
+
+    const allIdx = new Uint32Array(sideIdx.length + frontIdx.length + backIdx.length);
+    allIdx.set(sideIdx, 0);
+    this._frontIdxStart = sideIdx.length;
+    allIdx.set(frontIdx, this._frontIdxStart);
+    this._backIdxStart  = this._frontIdxStart + frontIdx.length;
+    allIdx.set(backIdx, this._backIdxStart);
+    this._frontIdxCount  = frontIdx.length;
+    this._totalFrontTris = frontIdx.length / 3;
+    this._origFrontIdx   = new Uint32Array(frontIdx);
+    this._origBackIdx    = new Uint32Array(backIdx);
+
+    this.geo = new THREE.BufferGeometry();
+    const posAttr = new THREE.BufferAttribute(pos, 3); posAttr.usage = THREE.DynamicDrawUsage;
+    this.geo.setAttribute('position', posAttr);
+    this.geo.setAttribute('normal',   new THREE.BufferAttribute(nor, 3));
+    this.geo.setAttribute('uv',       new THREE.BufferAttribute(uv, 2));
+    const idxAttr = new THREE.BufferAttribute(allIdx, 1); idxAttr.usage = THREE.DynamicDrawUsage;
+    this.geo.setIndex(idxAttr);
+    box.dispose();
+
+    // ── Damage / displacement (per corner vertex, one set per face) ──
     this.damage       = new Float32Array(faceCount);
     this.displacement = new Float32Array(faceCount);
     this._origZ       = new Float32Array(faceCount);
-    for (let i = 0; i < faceCount; i++) this._origZ[i] = posAttr.getZ(frontStart + i);
+    for (let i = 0; i < faceCount; i++) this._origZ[i] = pos[(frontStart + i) * 3 + 2];
 
-    this._damageback  = new Float32Array(faceCount);
-    this._backDisp    = new Float32Array(faceCount);
-    this._backOrigZ   = new Float32Array(faceCount);
-    for (let i = 0; i < faceCount; i++) this._backOrigZ[i] = posAttr.getZ(backStart + i);
+    this._damageback = new Float32Array(faceCount);
+    this._backDisp   = new Float32Array(faceCount);
+    this._backOrigZ  = new Float32Array(faceCount);
+    for (let i = 0; i < faceCount; i++) this._backOrigZ[i] = pos[(backStart + i) * 3 + 2];
 
-    // Mirror map: for face-local index i at grid (ix, iy),
-    // the OTHER face's vertex at the same world XY is at index (segsX - ix) + iy*(segsX+1).
-    // The back face has its X axis reversed (udir=-1), so offset T on the back face
-    // is NOT the same world position as offset T on the front face.
-    // mirrorMap[i] gives the LOCAL index on the opposite face that shares world XY.
-    // The map is symmetric: mirrorMap[mirrorMap[i]] === i.
+    // Mirror map: front corner i ↔ back corner at the same world XY (back face has
+    // its X axis reversed). Symmetric: mirrorMap[mirrorMap[i]] === i.
     this._mirrorMap = new Uint32Array(faceCount);
-    for (let iy = 0; iy <= segsY; iy++) {
-      for (let ix = 0; ix <= segsX; ix++) {
+    for (let iy = 0; iy <= segsY; iy++)
+      for (let ix = 0; ix <= segsX; ix++)
         this._mirrorMap[ix + iy * (segsX + 1)] = (segsX - ix) + iy * (segsX + 1);
-      }
-    }
-
-    // Preserve original index data for both faces (for loadState reset)
-    const g4 = this.geo.groups[4]; // +Z front
-    const g5 = this.geo.groups[5]; // -Z back
-    this._origFrontIdx   = new Uint32Array(idxArr.slice(g4.start, g4.start + g4.count));
-    this._origBackIdx    = new Uint32Array(idxArr.slice(g5.start, g5.start + g5.count));
-    this._frontIdxStart  = g4.start;
-    this._backIdxStart   = g5.start;
-    this._frontIdxCount  = g4.count;
-    this._totalFrontTris = g4.count / 3;
 
     this._culledCount = 0;
     this._passable    = false;
 
-    // Bake size-based tiling into the UVs so every wall can SHARE one texture
-    // per material type (big perf win: ~3 textures instead of one per wall),
-    // while keeping a consistent texel density on every face.
-    const uv = this.geo.attributes.uv;
-    const TILE = 1.6; // metres per texture tile
-    const ru = Math.max(1, width / TILE), rv = Math.max(1, height / TILE);
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * ru, uv.getY(i) * rv);
-    uv.needsUpdate = true;
-
-    // Single DoubleSide material — visible from every angle regardless of wall
-    // rotation; the shared texture tiles via the baked UVs above.
     const mat = new THREE.MeshLambertMaterial({ map: getWallTexture(type), side: THREE.DoubleSide });
     this.mesh = new THREE.Mesh(this.geo, mat);
-    this.mesh.position.z    = 0; // centred on the def position so geometry matches
-                                 // the (centred) footprints the overlap resolver uses
     this.mesh.castShadow    = true;
     this.mesh.receiveShadow = true;
     this.mesh.userData.wallId = this.id;
@@ -116,9 +167,19 @@ export class DestructibleWall {
     if (sz.z < MIN_THICK) { this._collisionBox.min.z -= MIN_THICK / 2; this._collisionBox.max.z += MIN_THICK / 2; }
   }
 
+  // Update each cell centre vertex z to the average of its 4 corners (keeps the
+  // subdivided surface continuous as it dents).
+  _syncCenters(vStart, centers, posAttr) {
+    for (const c of centers) {
+      const z = (posAttr.getZ(vStart + c.l00) + posAttr.getZ(vStart + c.l10)
+               + posAttr.getZ(vStart + c.l01) + posAttr.getZ(vStart + c.l11)) / 4;
+      posAttr.setZ(c.abs, z);
+    }
+  }
+
   // ── Hit application ─────────────────────────────────────────────────────────
   applyHit(worldPoint, rayDir, overrides = {}) {
-    if (this._indestructible) return; // solid perimeter — only sparks/chips (handled by Game)
+    if (this._indestructible) return;
 
     const p = overrides && Object.keys(overrides).length
       ? Object.assign({}, this._params, overrides)
@@ -126,20 +187,20 @@ export class DestructibleWall {
 
     _wallNormal.set(0, 0, 1).transformDirection(this.mesh.matrixWorld);
     const dot = _wallNormal.dot(rayDir);
-    if (Math.abs(dot) < 0.25) return; // ignore grazing / side-face hits
+    if (Math.abs(dot) < 0.25) return;
 
     const fromFront = dot < 0;
     const signZ     = fromFront ? -1 : 1;
-
-    const vStart = fromFront ? this._frontStart : this._backStart;
-    const dmg    = fromFront ? this.damage      : this._damageback;
-    const disp   = fromFront ? this.displacement : this._backDisp;
-    const origZ  = fromFront ? this._origZ       : this._backOrigZ;
+    const vStart    = fromFront ? this._frontStart   : this._backStart;
+    const dmg       = fromFront ? this.damage        : this._damageback;
+    const disp      = fromFront ? this.displacement  : this._backDisp;
+    const origZ     = fromFront ? this._origZ        : this._backOrigZ;
+    const centers   = fromFront ? this._frontCenters : this._backCenters;
 
     const local   = this.mesh.worldToLocal(worldPoint.clone());
     const posAttr = this.geo.attributes.position;
 
-    // Build Gaussians: one main + 2–4 random sub-impacts for a chunky, irregular hole
+    // Main Gaussian + 2–4 random sub-impacts → chunky, irregular hole
     const gs = [{ cx: local.x, cy: local.y, str: p.strength, ts: 2 * p.sigma * p.sigma }];
     const nChunks = 2 + Math.floor(Math.random() * 3);
     for (let c = 0; c < nChunks; c++) {
@@ -152,8 +213,7 @@ export class DestructibleWall {
 
     for (let i = 0; i < this._faceCount; i++) {
       const vi = vStart + i;
-      const vx = posAttr.getX(vi);
-      const vy = posAttr.getY(vi);
+      const vx = posAttr.getX(vi), vy = posAttr.getY(vi);
       let total = 0;
       for (const g of gs) {
         const dx = vx - g.cx, dy = vy - g.cy;
@@ -163,6 +223,7 @@ export class DestructibleWall {
       disp[i] += signZ * total * p.maxDisplace;
       posAttr.setZ(vi, origZ[i] + disp[i]);
     }
+    this._syncCenters(vStart, centers, posAttr);
 
     posAttr.needsUpdate = true;
     this._cullTriangles();
@@ -170,54 +231,40 @@ export class DestructibleWall {
   }
 
   // ── Triangle culling ────────────────────────────────────────────────────────
-  // A triangle is culled when all three of its vertices satisfy the damage threshold
-  // on EITHER face (using mirrorMap to check the opposite face at the same world XY).
-  // This ensures holes go clean through: a front-face hole also removes the back face
-  // at the same world position, and vice versa, with no mirroring artefact.
+  // Each cell is 4 triangles (2 corners + a centre). A sub-triangle is culled once
+  // BOTH its corner vertices pass the damage threshold, so holes eat into cells on
+  // the diagonal → smoother, rounder edges than whole-cell removal, at low poly.
   _cullTriangles() {
-    const idx     = this.geo.index;
+    const idx = this.geo.index;
     const { threshold, passThreshold, independentCull } = this._params;
-    const mm      = this._mirrorMap;
-    // Thick walls (concrete) chip each face independently: a chunk taken out of
-    // the front leaves the back face intact, so the wall reads as a solid block
-    // with a bite missing rather than punching straight through.
-    const xface = !independentCull;
+    const mm = this._mirrorMap, xface = !independentCull;
+    const fStart = this._frontStart, fEndV = fStart + this._faceCount;
+    const bStart = this._backStart,  bEndV = bStart + this._faceCount;
 
-    // Front face (+Z)
-    const frontEnd = this._frontIdxStart + this._frontIdxCount;
-    for (let t = this._frontIdxStart; t < frontEnd; t += 3) {
-      if (idx.getX(t) === 0 && idx.getX(t + 1) === 0 && idx.getX(t + 2) === 0) continue;
-      const a = idx.getX(t)     - this._frontStart;
-      const b = idx.getX(t + 1) - this._frontStart;
-      const c = idx.getX(t + 2) - this._frontStart;
-      const aCull = this.damage[a] >= threshold || (xface && this._damageback[mm[a]] >= threshold);
-      const bCull = this.damage[b] >= threshold || (xface && this._damageback[mm[b]] >= threshold);
-      const cCull = this.damage[c] >= threshold || (xface && this._damageback[mm[c]] >= threshold);
-      if (aCull && bCull && cCull) {
-        idx.setX(t, 0); idx.setX(t + 1, 0); idx.setX(t + 2, 0);
-        this._culledCount++;
-      }
+    const cornerCullF = (l) => this.damage[l]     >= threshold || (xface && this._damageback[mm[l]] >= threshold);
+    const cornerCullB = (l) => this._damageback[l] >= threshold || (xface && this.damage[mm[l]]     >= threshold);
+
+    // Front
+    const fEnd = this._frontIdxStart + this._frontIdxCount;
+    for (let t = this._frontIdxStart; t < fEnd; t += 3) {
+      const v = [idx.getX(t), idx.getX(t + 1), idx.getX(t + 2)];
+      if (v[0] === 0 && v[1] === 0 && v[2] === 0) continue;
+      let cull = true, corners = 0;
+      for (const vi of v) if (vi >= fStart && vi < fEndV) { corners++; if (!cornerCullF(vi - fStart)) cull = false; }
+      if (cull && corners > 0) { idx.setX(t, 0); idx.setX(t + 1, 0); idx.setX(t + 2, 0); this._culledCount++; }
     }
-
-    // Back face (-Z) — same logic, symmetric
-    const backEnd = this._backIdxStart + this._frontIdxCount;
-    for (let t = this._backIdxStart; t < backEnd; t += 3) {
-      if (idx.getX(t) === 0 && idx.getX(t + 1) === 0 && idx.getX(t + 2) === 0) continue;
-      const a = idx.getX(t)     - this._backStart;
-      const b = idx.getX(t + 1) - this._backStart;
-      const c = idx.getX(t + 2) - this._backStart;
-      const aCull = this._damageback[a] >= threshold || (xface && this.damage[mm[a]] >= threshold);
-      const bCull = this._damageback[b] >= threshold || (xface && this.damage[mm[b]] >= threshold);
-      const cCull = this._damageback[c] >= threshold || (xface && this.damage[mm[c]] >= threshold);
-      if (aCull && bCull && cCull) {
-        idx.setX(t, 0); idx.setX(t + 1, 0); idx.setX(t + 2, 0);
-      }
+    // Back
+    const bEnd = this._backIdxStart + this._frontIdxCount;
+    for (let t = this._backIdxStart; t < bEnd; t += 3) {
+      const v = [idx.getX(t), idx.getX(t + 1), idx.getX(t + 2)];
+      if (v[0] === 0 && v[1] === 0 && v[2] === 0) continue;
+      let cull = true, corners = 0;
+      for (const vi of v) if (vi >= bStart && vi < bEndV) { corners++; if (!cornerCullB(vi - bStart)) cull = false; }
+      if (cull && corners > 0) { idx.setX(t, 0); idx.setX(t + 1, 0); idx.setX(t + 2, 0); }
     }
 
     idx.needsUpdate = true;
-    if (!this._passable && this._culledCount / this._totalFrontTris >= passThreshold) {
-      this._passable = true;
-    }
+    if (!this._passable && this._culledCount / this._totalFrontTris >= passThreshold) this._passable = true;
   }
 
   // ── Network sync ────────────────────────────────────────────────────────────
@@ -235,9 +282,7 @@ export class DestructibleWall {
     this._culledCount = 0;
     this._passable    = false;
 
-    const idx     = this.geo.index;
-    const posAttr = this.geo.attributes.position;
-
+    const idx = this.geo.index;
     for (let i = 0; i < this._origFrontIdx.length; i++) {
       idx.array[this._frontIdxStart + i] = this._origFrontIdx[i];
       idx.array[this._backIdxStart  + i] = this._origBackIdx[i];
@@ -245,14 +290,17 @@ export class DestructibleWall {
     idx.needsUpdate = true;
 
     this.damage       = new Float32Array(damage);
-    this._damageback  = new Float32Array(damageback  ?? damage.length);
+    this._damageback  = new Float32Array(damageback   ?? damage.length);
     this.displacement = new Float32Array(displacement ?? damage.length);
     this._backDisp    = new Float32Array(backdisp     ?? damage.length);
 
+    const posAttr = this.geo.attributes.position;
     for (let i = 0; i < this._faceCount; i++) {
       posAttr.setZ(this._frontStart + i, this._origZ[i]     + this.displacement[i]);
       posAttr.setZ(this._backStart  + i, this._backOrigZ[i] + this._backDisp[i]);
     }
+    this._syncCenters(this._frontStart, this._frontCenters, posAttr);
+    this._syncCenters(this._backStart,  this._backCenters,  posAttr);
     posAttr.needsUpdate = true;
     this._cullTriangles();
     this.geo.computeVertexNormals();
