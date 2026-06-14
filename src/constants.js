@@ -50,15 +50,13 @@ export const WALL_TYPES = {
   },
   concrete: {
     depth:         0.28,   // 28 cm — solid reinforced concrete
-    sigma:         0.22,   // wide impact spread
-    strength:      0.34,   // accumulates — sustained fire chips chunks loose
-    threshold:     1.25,   // chunks pop out once enough damage piles up (~5+ focused hits)
-    maxDisplace:   0.025,  // light cratering before the chunk lets go
-    segsPerM:      20,     // low-poly → big faceted (chunky) breakage
+    sigma:         0.18,
+    strength:      0.11,   // ~10 focused shots to breach (medium ≈ 3)
+    threshold:     0.85,
+    maxDisplace:   0.005,
+    segsPerM:      55,
     color:         0x8c8c8c,
     interiorColor: 0x5a5a5a,
-    passThreshold: 0.45,   // tough to fully breach
-    independentCull: true, // front/back chip separately → solid-looking interior
-    chunky:        true,   // throw rock-chunk debris when hit
+    passThreshold: 0.20,
   },
 };

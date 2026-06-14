@@ -108,11 +108,6 @@ export class Game {
       this._spawnSparks(result.hitPoint, hs);
     }
 
-    if (result.hit) {
-      const wall = this.wallManager.getById(result.wallId);
-      if (wall?.type === 'concrete') { this._spawnChunks(result.point); this._spawnChips(result.point); }
-    }
-
     if (this.net) {
       const GUN_OFFSET = new THREE.Vector3(0.35, 1.2, -0.15);
       GUN_OFFSET.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.localPlayer.getYaw());
@@ -447,10 +442,6 @@ export class Game {
             new THREE.Vector3().fromArray(msg.rayDir),
             overrides
           );
-          if (wall.type === 'concrete') {
-            const cp = new THREE.Vector3().fromArray(msg.hitPoint);
-            this._spawnChunks(cp); this._spawnChips(cp);
-          }
         }
       }
 
