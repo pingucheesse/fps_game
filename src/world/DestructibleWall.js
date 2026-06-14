@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { WALL_TYPES } from '../constants.js';
+import { getWallTexture } from './wallTextures.js';
 
 let _idCounter = 0;
 const _wallNormal = new THREE.Vector3();
@@ -87,7 +88,13 @@ export class DestructibleWall {
 
     // Single DoubleSide material — guaranteed visible from every angle regardless
     // of wall rotation. MirrorMap culling ensures holes punch through both faces.
-    const mat = new THREE.MeshLambertMaterial({ color: p.color, side: THREE.DoubleSide });
+    // A per-type surface texture is tiled by world size so every face (front,
+    // back, sides, hole interiors) reads as a real surface in any lighting.
+    const tex = getWallTexture(type).clone();
+    tex.needsUpdate = true;
+    const TILE = 1.6; // metres per texture tile
+    tex.repeat.set(Math.max(1, width / TILE), Math.max(1, height / TILE));
+    const mat = new THREE.MeshLambertMaterial({ map: tex, color: 0xffffff, side: THREE.DoubleSide });
     this.mesh = new THREE.Mesh(this.geo, mat);
     this.mesh.position.z    = -p.depth / 2; // places +Z face flush with group origin
     this.mesh.castShadow    = true;
@@ -247,7 +254,7 @@ export class DestructibleWall {
     scene.remove(this._group);
     this._group.traverse(o => {
       if (o.geometry) o.geometry.dispose();
-      if (o.material)  o.material.dispose();
+      if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
     });
   }
 }

@@ -24,11 +24,27 @@ function mulberry32(a) {
 const PI = Math.PI;
 
 // ── Map dimensions (mirror axis is x = 0) ────────────────────────────────────
-export const HX = 16;   // half width  → map spans x ∈ [-16, 16]
-export const HZ = 12;   // half depth  → map spans z ∈ [-12, 12]
+export const HX = 18;   // half width  → map spans x ∈ [-18, 18]
+export const HZ = 13;   // half depth  → map spans z ∈ [-13, 13]
 const WALL_H = 3;       // full wall height
 const LOW_H  = 1.1;     // crouch-height cover
-const DOOR_W = 1.5;     // doorway gap
+const DOOR_W = 1.6;     // doorway gap
+
+// Interior grid-line positions from `start` to `end` split into `n` cells, with
+// the interior lines jittered so rooms vary in size (a non-straight layout).
+// Always strictly increasing with a minimum cell size → walls never cross.
+function linePositions(rng, start, end, n, jitter) {
+  const span = end - start, minGap = 2.6;
+  const out = [start];
+  for (let i = 1; i < n; i++) {
+    const base = start + (span * i) / n;
+    let p = base + (rng() * 2 - 1) * jitter;
+    p = Math.max(out[i - 1] + minGap, Math.min(p, end - minGap * (n - i)));
+    out.push(p);
+  }
+  out.push(end);
+  return out;
+}
 
 function pickType(rng) {
   const r = rng();
@@ -77,17 +93,14 @@ function mirror(defs) {
 function generateCQB(rng) {
   const defs = [];
 
-  const CENTER_HALF = 2;                 // central corridor x ∈ [-2, 2]
-  const X0 = -HX;
-  const ROOM_W = HX - CENTER_HALF;       // left room region width (14)
-  const COLS = 4, ROWS = 5;
-  const cellW = ROOM_W / COLS;           // 3.5
-  const cellD = (2 * HZ) / ROWS;         // 4.8
+  const CENTER_HALF = 2.5;               // central corridor x ∈ [-2.5, 2.5]
+  const COLS = 3, ROWS = 4;              // fewer cells → ~2× larger rooms
 
-  const lineX = (cc) => X0 + cc * cellW;
-  const lineZ = (rr) => -HZ + rr * cellD;
-  const cellCX = (c) => X0 + (c + 0.5) * cellW;
-  const cellCZ = (r) => -HZ + (r + 0.5) * cellD;
+  // Jittered interior grid lines → irregular, non-straight rooms.
+  const xs = linePositions(rng, -HX, -CENTER_HALF, COLS, 1.9); // length COLS+1
+  const zs = linePositions(rng, -HZ,  HZ,          ROWS, 2.4); // length ROWS+1
+  const cellCX = (c) => (xs[c] + xs[c + 1]) / 2;
+  const cellCZ = (r) => (zs[r] + zs[r + 1]) / 2;
 
   // Maze (randomised DFS) → spanning tree over all left cells
   const idx = (c, r) => c + r * COLS;
@@ -113,23 +126,23 @@ function generateCQB(rng) {
     stack.push([nc, nr]);
   }
   // Extra doorways for loops (fewer dead ends)
-  for (let k = 0; k < 4; k++) {
+  for (let k = 0; k < 3; k++) {
     const c = 1 + Math.floor(rng() * (COLS - 1));
     const r = Math.floor(rng() * ROWS);
     passV[c][r] = true;
   }
 
-  // Vertical interior walls
+  // Vertical interior walls (cc==COLS opens rooms to the central corridor)
   for (let cc = 1; cc <= COLS; cc++) {
     for (let r = 0; r < ROWS; r++) {
       const door = cc === COLS ? true : passV[cc][r];
-      segment(defs, 'v', lineX(cc), cellCZ(r), cellD, pickType(rng), WALL_H, door);
+      segment(defs, 'v', xs[cc], cellCZ(r), zs[r + 1] - zs[r], pickType(rng), WALL_H, door);
     }
   }
   // Horizontal interior walls (room region only)
   for (let rr = 1; rr < ROWS; rr++) {
     for (let c = 0; c < COLS; c++) {
-      segment(defs, 'h', lineZ(rr), cellCX(c), cellW, pickType(rng), WALL_H, passH[c][rr]);
+      segment(defs, 'h', zs[rr], cellCX(c), xs[c + 1] - xs[c], pickType(rng), WALL_H, passH[c][rr]);
     }
   }
 
@@ -137,13 +150,14 @@ function generateCQB(rng) {
   perimeter(defs);
 
   // Central cover (on the axis → symmetric)
-  defs.push({ type: 'concrete', w: 2.2, h: LOW_H,  pos: [0, LOW_H / 2, 0], rot: [0, 0, 0] });
-  defs.push({ type: 'medium',   w: 1.6, h: WALL_H, pos: [0, WALL_H / 2, -HZ + cellD], rot: [0, PI / 2, 0] });
-  defs.push({ type: 'medium',   w: 1.6, h: WALL_H, pos: [0, WALL_H / 2,  HZ - cellD], rot: [0, PI / 2, 0] });
+  defs.push({ type: 'concrete', w: 2.6, h: LOW_H,  pos: [0, LOW_H / 2, 0], rot: [0, 0, 0] });
+  defs.push({ type: 'medium',   w: 1.8, h: WALL_H, pos: [0, WALL_H / 2, zs[1]], rot: [0, PI / 2, 0] });
+  defs.push({ type: 'medium',   w: 1.8, h: WALL_H, pos: [0, WALL_H / 2, zs[ROWS - 1]], rot: [0, PI / 2, 0] });
 
+  const mid = Math.floor(ROWS / 2), last = ROWS - 1;
   const spawns = [
-    [cellCX(0), cellCZ(0)], [cellCX(0), cellCZ(2)], [cellCX(0), cellCZ(4)],
-    [-cellCX(0), cellCZ(0)], [-cellCX(0), cellCZ(2)], [-cellCX(0), cellCZ(4)],
+    [cellCX(0), cellCZ(0)], [cellCX(0), cellCZ(mid)], [cellCX(0), cellCZ(last)],
+    [-cellCX(0), cellCZ(0)], [-cellCX(0), cellCZ(mid)], [-cellCX(0), cellCZ(last)],
   ];
   return { defs, spawns };
 }

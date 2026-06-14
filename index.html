@@ -105,6 +105,13 @@
       color: rgba(255,255,255,0.35); font-size: 0.75rem; letter-spacing: 0.1em;
     }
 
+    /* ── Minimap ── */
+    #minimap {
+      position: absolute; top: 12px; left: 12px;
+      border: 1px solid rgba(255,255,255,0.18); border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+
     /* ── Kill / death score ── */
     #score-display {
       position: absolute; top: 1rem; left: 50%; transform: translateX(-50%);
@@ -240,6 +247,7 @@
 
   <!-- ── HUD ── -->
   <div id="hud">
+    <canvas id="minimap" width="156" height="140"></canvas>
     <div id="hit-flash"></div>
     <div id="hit-marker">
       <div class="hm hm-tl"></div>

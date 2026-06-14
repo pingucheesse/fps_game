@@ -2,3 +2,8 @@ node_modules/
 dist/
 .env
 *.local
+
+# Dev/test artifacts
+scripts/*.png
+scripts/vite.log
+test-results/

@@ -5,6 +5,7 @@ import { LocalPlayer } from './player/LocalPlayer.js';
 import { RemotePlayer } from './player/RemotePlayer.js';
 import { Raycast } from './weapons/Raycast.js';
 import { HUD } from './ui/HUD.js';
+import { Minimap } from './ui/Minimap.js';
 import { SYNC_MS } from './constants.js';
 
 const MAX_HP    = 100;
@@ -36,6 +37,7 @@ export class Game {
     this.remotePlayers = new Map();
     this.raycast = new Raycast(this.wallManager);
     this.hud     = new HUD();
+    this.minimap = new Minimap(document.getElementById('minimap'), this.wallManager);
 
     this._meleeRaycaster = new THREE.Raycaster();
     this._meleeRaycaster.far = KNIFE_RANGE;
@@ -422,6 +424,9 @@ export class Game {
     for (const rp of this.remotePlayers.values()) rp.update(dt);
     this._updateParticles(dt);
     this.hud.update(dt);
+
+    const mpos = this.localPlayer.getPosition();
+    this.minimap.update(mpos.x, mpos.z, this.localPlayer.getYaw());
 
     if (this.net) {
       this._syncAccum += dt * 1000;

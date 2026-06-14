@@ -92,13 +92,20 @@ for (const seed of seeds) {
   const asymmetric = m.defs.filter(d => !present.has(key(d)));
   check(asymmetric.length === 0, `mirror-symmetric (${asymmetric.length} unmatched)`);
 
-  // 3. No stacked/overlapping walls (same orientation, real area overlap)
+  // 3. No overlapping walls — exhaustive pairwise search.
+  //    Same orientation: any real overlap = stacked/duplicate wall (bad).
+  //    Perpendicular: a corner joint of ~thickness² is expected; flag bigger.
   const boxes = m.defs.map(aabb);
-  let overlaps = 0;
-  for (let i = 0; i < boxes.length; i++)
-    for (let j = i + 1; j < boxes.length; j++)
-      if (boxes[i].orient === boxes[j].orient && overlapArea(boxes[i], boxes[j]) > 0.05) overlaps++;
-  check(overlaps === 0, `no overlapping walls (${overlaps} found)`);
+  let overlaps = 0; const worst = [];
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j], ov = overlapArea(a, b);
+      if (ov <= 0) continue;
+      const limit = a.orient === b.orient ? 0.05 : 0.12;
+      if (ov > limit) { overlaps++; if (worst.length < 3) worst.push(ov.toFixed(2)); }
+    }
+  }
+  check(overlaps === 0, `no overlapping walls (${overlaps} found${worst.length ? ', areas ' + worst.join(',') : ''})`);
 
   // 4. Every spawn reaches the middle region (within 2 m of centre)
   const grid = buildGrid(m.defs);
@@ -110,8 +117,8 @@ for (const seed of seeds) {
   const left = m.spawns.find(s => s[0] < 0), right = m.spawns.find(s => s[0] > 0);
   check(grid.reaches(left[0], left[1], right[0], right[1]), 'left half connects to right half');
 
-  // 6. Reasonable density for the style (cqb = many rooms, open = sparser cover)
-  const minWalls = m.style === 'cqb' ? 60 : 18;
+  // 6. Reasonable density for the style (cqb = rooms, open = sparser cover)
+  const minWalls = m.style === 'cqb' ? 38 : 18;
   check(m.defs.length >= minWalls, `enough walls for style (${m.defs.length} ≥ ${minWalls})`);
 }
 
