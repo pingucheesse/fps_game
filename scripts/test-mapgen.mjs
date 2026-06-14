@@ -92,17 +92,15 @@ for (const seed of seeds) {
   const asymmetric = m.defs.filter(d => !present.has(key(d)));
   check(asymmetric.length === 0, `mirror-symmetric (${asymmetric.length} unmatched)`);
 
-  // 3. No overlapping walls — exhaustive pairwise search.
-  //    Same orientation: any real overlap = stacked/duplicate wall (bad).
-  //    Perpendicular: a corner joint of ~thickness² is expected; flag bigger.
+  // 3. No overlapping walls at all — exhaustive pairwise search. After the
+  //    resolver runs, every wall should merely butt against its neighbours, so
+  //    any shared footprint area beyond a hairline tolerance is a failure.
   const boxes = m.defs.map(aabb);
   let overlaps = 0; const worst = [];
   for (let i = 0; i < boxes.length; i++) {
     for (let j = i + 1; j < boxes.length; j++) {
-      const a = boxes[i], b = boxes[j], ov = overlapArea(a, b);
-      if (ov <= 0) continue;
-      const limit = a.orient === b.orient ? 0.05 : 0.12;
-      if (ov > limit) { overlaps++; if (worst.length < 3) worst.push(ov.toFixed(2)); }
+      const ov = overlapArea(boxes[i], boxes[j]);
+      if (ov > 0.02) { overlaps++; if (worst.length < 3) worst.push(ov.toFixed(3)); }
     }
   }
   check(overlaps === 0, `no overlapping walls (${overlaps} found${worst.length ? ', areas ' + worst.join(',') : ''})`);

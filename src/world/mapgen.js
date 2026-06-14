@@ -53,14 +53,93 @@ function pickType(rng) {
   return 'concrete';
 }
 
-// Outer concrete perimeter (4 walls).
+// Outer concrete perimeter (4 walls). `fixed` → never trimmed by the resolver.
 function perimeter(defs) {
   defs.push(
-    { type: 'concrete', w: 2 * HX, h: WALL_H, pos: [0, WALL_H / 2, -HZ], rot: [0, 0, 0]     }, // N
-    { type: 'concrete', w: 2 * HX, h: WALL_H, pos: [0, WALL_H / 2,  HZ], rot: [0, PI, 0]     }, // S
-    { type: 'concrete', w: 2 * HZ, h: WALL_H, pos: [-HX, WALL_H / 2, 0], rot: [0,  PI / 2, 0] }, // W
-    { type: 'concrete', w: 2 * HZ, h: WALL_H, pos: [ HX, WALL_H / 2, 0], rot: [0, -PI / 2, 0] }, // E
+    { type: 'concrete', w: 2 * HX, h: WALL_H, pos: [0, WALL_H / 2, -HZ], rot: [0, 0, 0],      fixed: true }, // N
+    { type: 'concrete', w: 2 * HX, h: WALL_H, pos: [0, WALL_H / 2,  HZ], rot: [0, PI, 0],      fixed: true }, // S
+    { type: 'concrete', w: 2 * HZ, h: WALL_H, pos: [-HX, WALL_H / 2, 0], rot: [0,  PI / 2, 0], fixed: true }, // W
+    { type: 'concrete', w: 2 * HZ, h: WALL_H, pos: [ HX, WALL_H / 2, 0], rot: [0, -PI / 2, 0], fixed: true }, // E
   );
+}
+
+// ── Overlap resolver ─────────────────────────────────────────────────────────
+// Detects any pair of walls whose footprints overlap and trims the offending
+// wall along its length so it just butts against the other (no shared volume).
+// The "poking" wall (the one whose END sits inside the other) is trimmed; at an
+// L-corner where both ends meet, the thinner / non-perimeter / vertical wall is
+// trimmed. Walls trimmed below MIN_LEN are deleted entirely.
+const DEPTH = { thin: 0.04, medium: 0.12, concrete: 0.28 };
+const MIN_LEN = 0.3;
+const EPS = 1e-3;
+
+const runsAlongX = (d) => Math.abs(Math.sin(d.rot[1])) < 0.5; // true → 'h'
+
+function foot(d) {
+  const L = d.w, T = DEPTH[d.type] ?? 0.12, [x, , z] = d.pos;
+  return runsAlongX(d)
+    ? { x0: x - L / 2, x1: x + L / 2, z0: z - T / 2, z1: z + T / 2 }
+    : { x0: x - T / 2, x1: x + T / 2, z0: z - L / 2, z1: z + L / 2 };
+}
+
+function overlap(a, b) {
+  const x0 = Math.max(a.x0, b.x0), x1 = Math.min(a.x1, b.x1);
+  const z0 = Math.max(a.z0, b.z0), z1 = Math.min(a.z1, b.z1);
+  if (x1 - x0 <= EPS || z1 - z0 <= EPS) return null;
+  return { x0, x1, z0, z1 };
+}
+
+// Overlap interval projected onto a wall's running axis, and whether it hits an end.
+function span(d, ov) {
+  const rx = runsAlongX(d), c = rx ? d.pos[0] : d.pos[2];
+  const lo = rx ? ov.x0 : ov.z0, hi = rx ? ov.x1 : ov.z1;
+  const a0 = c - d.w / 2, a1 = c + d.w / 2;
+  return { lo, hi, a0, a1, ends: lo <= a0 + EPS || hi >= a1 - EPS };
+}
+
+function trim(d, ov) {
+  const rx = runsAlongX(d), c = rx ? d.pos[0] : d.pos[2];
+  let a0 = c - d.w / 2, a1 = c + d.w / 2;
+  const lo = rx ? ov.x0 : ov.z0, hi = rx ? ov.x1 : ov.z1;
+  const loEnd = lo <= a0 + EPS, hiEnd = hi >= a1 - EPS;
+  if (loEnd && hiEnd)      a1 = a0;                       // fully covered → delete
+  else if (loEnd)          a0 = hi;                       // retract low end
+  else if (hiEnd)          a1 = lo;                       // retract high end
+  else if (lo - a0 >= a1 - hi) a1 = lo; else a0 = hi;     // middle → keep larger side
+  d.w = a1 - a0;
+  const mid = (a0 + a1) / 2;
+  if (rx) d.pos[0] = mid; else d.pos[2] = mid;
+}
+
+function resolveOverlaps(defs) {
+  for (let pass = 0; pass < 8; pass++) {
+    let changed = false;
+    for (let i = 0; i < defs.length; i++) {
+      const A = defs[i]; if (A._dead) continue;
+      for (let j = i + 1; j < defs.length; j++) {
+        const B = defs[j]; if (B._dead) continue;
+        const ov = overlap(foot(A), foot(B));
+        if (!ov) continue;
+
+        let t;                                            // wall to trim
+        if (A.fixed && B.fixed) continue;                 // two perimeter ends — leave
+        else if (A.fixed) t = B;
+        else if (B.fixed) t = A;
+        else {
+          const sa = span(A, ov), sb = span(B, ov);
+          if (sa.ends && !sb.ends) t = A;                 // A pokes into B
+          else if (sb.ends && !sa.ends) t = B;
+          else if (runsAlongX(A) !== runsAlongX(B)) t = runsAlongX(A) ? B : A; // trim the 'v'
+          else t = A.w <= B.w ? A : B;                    // trim the shorter
+        }
+        trim(t, ov);
+        changed = true;
+        if (t.w < MIN_LEN) t._dead = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return defs.filter((d) => !d._dead);
 }
 
 // Add a wall segment, optionally with a centred doorway gap.
@@ -206,5 +285,5 @@ export function generateMap(seed = 'default') {
   const rng = mulberry32(hashStr(String(seed)));
   const style = rng() < 0.5 ? 'cqb' : 'open';
   const { defs, spawns } = style === 'cqb' ? generateCQB(rng) : generateOpen(rng);
-  return { style, defs, spawns };
+  return { style, defs: resolveOverlaps(defs), spawns };
 }

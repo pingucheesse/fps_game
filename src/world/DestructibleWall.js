@@ -96,7 +96,8 @@ export class DestructibleWall {
     tex.repeat.set(Math.max(1, width / TILE), Math.max(1, height / TILE));
     const mat = new THREE.MeshLambertMaterial({ map: tex, color: 0xffffff, side: THREE.DoubleSide });
     this.mesh = new THREE.Mesh(this.geo, mat);
-    this.mesh.position.z    = -p.depth / 2; // places +Z face flush with group origin
+    this.mesh.position.z    = 0; // centred on the def position so geometry matches
+                                 // the (centred) footprints the overlap resolver uses
     this.mesh.castShadow    = true;
     this.mesh.receiveShadow = true;
     this.mesh.userData.wallId = this.id;
