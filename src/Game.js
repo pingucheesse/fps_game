@@ -6,6 +6,7 @@ import { RemotePlayer } from './player/RemotePlayer.js';
 import { Raycast } from './weapons/Raycast.js';
 import { HUD } from './ui/HUD.js';
 import { Minimap } from './ui/Minimap.js';
+import { WIRE_RADIUS } from './weapons/DartGun.js';
 import { HX, HZ } from './world/mapgen.js';
 import { SYNC_MS } from './constants.js';
 
@@ -51,6 +52,7 @@ export class Game {
 
     this._meleeRaycaster = new THREE.Raycaster();
     this._meleeRaycaster.far = KNIFE_RANGE;
+    this._dartCaster = new THREE.Raycaster();
 
     this.hp    = MAX_HP;
     this.armor = MAX_ARMOR;
@@ -134,6 +136,7 @@ export class Game {
   // intermission. The walls drop and the fight resumes when the timer ends.
   _beginRound() {
     this._clearDividers();
+    this.localPlayer.dartGun.retract();
     this.wallManager.loadMap(this._baseSeed); // same map, pristine
     this.minimap.reload(this.wallManager);
     this._clearParticles();
@@ -210,15 +213,21 @@ export class Game {
 
   // ── Input ─────────────────────────────────────────────────────────────────
   _bindInput() {
+    document.addEventListener('contextmenu', (e) => { if (this.localPlayer.isLocked) e.preventDefault(); });
+
     document.addEventListener('mousedown', (e) => {
-      if (e.button !== 0 || !this.localPlayer.isLocked) return;
-      this._fire();
+      if (!this.localPlayer.isLocked) return;
+      const dart = this.localPlayer.weapon === 'dart';
+      if (e.button === 0) { dart ? this._dartLeft() : this._fire(); }
+      else if (e.button === 2 && dart) { this._dartRight(); }
     });
 
     document.addEventListener('keydown', (e) => {
       if (e.repeat || !this.localPlayer.isLocked) return;
+      if (e.code === 'Digit1') this.localPlayer.equip('pistol');
+      if (e.code === 'Digit2') this.localPlayer.equip('dart');
       if (e.code === 'KeyV') this._quickStab();
-      if (e.code === 'KeyR' && !this._reloading && this._ammo < MAX_AMMO) this._startReload();
+      if (e.code === 'KeyR' && this.localPlayer.weapon === 'pistol' && !this._reloading && this._ammo < MAX_AMMO) this._startReload();
     });
   }
 
@@ -338,6 +347,101 @@ export class Game {
           }
         }
       }
+    }
+  }
+
+  // ── Dart gun ────────────────────────────────────────────────────────────────
+  _dartLeft() {
+    if (this._intermission) return;
+    const dg = this.localPlayer.dartGun;
+    if (dg.singleOut) { dg.retract(); return; }   // 2nd click retracts
+    if (dg.deployed) return;                       // a triangle is out
+
+    const cam = this.localPlayer.camera;
+    const dir = new THREE.Vector3(); cam.getWorldDirection(dir);
+    dg.fireSingle(dir);
+
+    // The wire shocks instantly: 50 to anything along the line gun → impact
+    const origin = dg.muzzleWorld;
+    const end = this._wallClip(origin, dir, 16);
+    this._dartLineDamage(origin, end, WIRE_RADIUS, 50);
+  }
+
+  _dartRight() {
+    if (this._intermission) return;
+    const dg = this.localPlayer.dartGun;
+
+    if (dg.triangleOut) {                           // 2nd click electrifies
+      dg.electrify();
+      const tips = dg.getTips();
+      this._dartTriangleDamage(tips, dg.getWireSegments());
+      return;
+    }
+    if (dg.deployed) return;                         // need all 3 darts (nothing out)
+
+    const cam = this.localPlayer.camera; cam.updateMatrixWorld();
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
+    const up    = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
+    const fwd   = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 2).negate();
+    dg.fireTriangle(fwd, up, right);
+  }
+
+  _wallClip(origin, dir, maxR) {
+    this._dartCaster.set(origin, dir.clone().normalize()); this._dartCaster.far = maxR;
+    const hits = this._dartCaster.intersectObjects(this.wallManager.meshes, false);
+    return hits.length > 0 ? hits[0].point.clone() : origin.clone().addScaledVector(dir, maxR);
+  }
+
+  _segDist(p, a, b) {
+    const ab = b.clone().sub(a), ap = p.clone().sub(a);
+    const t = Math.max(0, Math.min(1, ap.dot(ab) / (ab.lengthSq() || 1)));
+    return ap.distanceTo(ab.multiplyScalar(t));
+  }
+
+  _pointInTri2D(p, a, b, c) {
+    const d = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+    if (Math.abs(d) < 1e-6) return false;
+    const u = ((b.z - c.z) * (p.x - c.x) + (c.x - b.x) * (p.z - c.z)) / d;
+    const v = ((c.z - a.z) * (p.x - c.x) + (a.x - c.x) * (p.z - c.z)) / d;
+    return u >= 0 && v >= 0 && u + v <= 1;
+  }
+
+  // Apply damage to any remote player near the line a→b
+  _dartLineDamage(a, b, radius, dmg) {
+    for (const [peerId, rp] of this.remotePlayers) {
+      const base = rp.group.position;
+      const body = new THREE.Vector3(base.x, base.y + 0.9, base.z);
+      const head = new THREE.Vector3(base.x, base.y + 1.5, base.z);
+      if (this._segDist(body, a, b) < radius || this._segDist(head, a, b) < radius) {
+        this._applyDartHit(peerId, dmg, a, b);
+      }
+    }
+  }
+
+  // 40 to anyone inside the triangle (+40 if also touching a wire)
+  _dartTriangleDamage(tips, wires) {
+    if (tips.length < 3) return;
+    const yLo = Math.min(tips[0].y, tips[1].y, tips[2].y) - 1.6;
+    const yHi = Math.max(tips[0].y, tips[1].y, tips[2].y) + 1.0;
+    for (const [peerId, rp] of this.remotePlayers) {
+      const base = rp.group.position;
+      const c = new THREE.Vector3(base.x, base.y + 0.9, base.z);
+      let dmg = 0;
+      if (c.y >= yLo && c.y <= yHi && this._pointInTri2D(c, tips[0], tips[1], tips[2])) dmg += 40;
+      for (const [a, b] of wires) {
+        if (this._segDist(c, a, b) < WIRE_RADIUS) { dmg += 40; break; }
+      }
+      if (dmg > 0) this._applyDartHit(peerId, dmg, tips[0], c);
+    }
+  }
+
+  _applyDartHit(peerId, dmg, a, b) {
+    this.hud.showHitMarker(false);
+    if (this.net) {
+      this.net.send({
+        type: 'shoot', playerHit: true, targetId: peerId, hitType: 'body',
+        knifeDmg: dmg, origin: a.toArray(), end: b.toArray(),
+      });
     }
   }
 

@@ -9,3 +9,4 @@ scripts/vite.log
 test-results/
 
 .vercel
+.env*

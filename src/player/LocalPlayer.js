@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { PlayerController } from './PlayerController.js';
 import { Gun } from '../weapons/Gun.js';
 import { Knife } from '../weapons/Knife.js';
+import { DartGun } from '../weapons/DartGun.js';
 import { EYE_HEIGHT, CROUCH_EYE_HEIGHT, LEAN_MAX } from '../constants.js';
 
 export class LocalPlayer {
@@ -29,6 +30,8 @@ export class LocalPlayer {
 
     this.gun         = new Gun(this.camera);
     this.knife       = new Knife(this.camera);
+    this.dartGun     = new DartGun(this.camera, scene);
+    this.weapon      = 'pistol';   // 'pistol' | 'dart'
     this._stabReturn = false;
     this.controller  = new PlayerController(canvas, this.yawObj, this.pitchObj, settings);
 
@@ -40,11 +43,23 @@ export class LocalPlayer {
   get isCrouching() { return this.controller.isCrouching; }
   getLean()         { return this.controller.lean; }
 
-  // V key: knife flashes on screen for the animation duration then gun returns
+  equip(weapon) {
+    if (weapon !== 'pistol' && weapon !== 'dart') return;
+    this.weapon = weapon;
+    if (!this._stabReturn) this._showActiveWeapon();
+  }
+
+  _showActiveWeapon() {
+    this.gun.visible     = this.weapon === 'pistol';
+    this.dartGun.visible = this.weapon === 'dart';
+  }
+
+  // V key: knife flashes on screen for the animation duration then weapon returns
   quickStab() {
     if (this.knife.isStabbing) return;
-    this.gun.visible   = false;
-    this.knife.visible = true;
+    this.gun.visible     = false;
+    this.dartGun.visible = false;
+    this.knife.visible   = true;
     this.knife.stab();
     this._stabReturn = true;
   }
@@ -53,11 +68,12 @@ export class LocalPlayer {
     this.controller.update(dt, wallManager, dividers);
     this.gun.update(dt);
     this.knife.update(dt);
+    this.dartGun.update(dt, wallManager ? wallManager.meshes : []);
 
-    // Once the stab animation ends, restore the gun automatically
+    // Once the stab animation ends, restore the active weapon automatically
     if (this._stabReturn && !this.knife.isStabbing) {
       this.knife.visible = false;
-      this.gun.visible   = true;
+      this._showActiveWeapon();
       this._stabReturn   = false;
     }
 
