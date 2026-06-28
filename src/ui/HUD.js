@@ -12,9 +12,20 @@ export class HUD {
     this._hitMarkerEl = document.getElementById('hit-marker');
     this._scoreEl     = document.getElementById('score-display');
     this._ammoEl      = document.getElementById('ammo-display');
+    this._intermEl    = document.getElementById('intermission');
     this._hitAlpha    = 0;
     this._notifTimer  = null;
     this._hmTimer     = null;
+  }
+
+  setIntermission(seconds) {
+    if (!this._intermEl) return;
+    this._intermEl.innerHTML = `INTERMISSION<br><span class="big">${seconds}</span>`;
+    this._intermEl.style.display = 'block';
+  }
+
+  hideIntermission() {
+    if (this._intermEl) this._intermEl.style.display = 'none';
   }
 
   setAmmo(cur, max, reloading = false) {

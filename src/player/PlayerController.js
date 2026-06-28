@@ -64,7 +64,7 @@ export class PlayerController {
   // -1 = lean left (Q), 0 = upright, +1 = lean right (E) — toggled per key
   get lean() { return this._lean; }
 
-  update(dt, wallManager) {
+  update(dt, wallManager, dividers = []) {
     const pos = this.yawObj.position;
 
     const crouching  = this.isCrouching;
@@ -109,6 +109,8 @@ export class PlayerController {
         this._pushOut(pos, wall.getCollisionBox(), playerH);
       }
     }
+    // ── Intermission dividing walls ──
+    for (const d of dividers) this._pushOut(pos, d.box, playerH);
   }
 
   _pushOut(pos, box, playerH) {

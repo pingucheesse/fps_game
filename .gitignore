@@ -7,3 +7,5 @@ dist/
 scripts/*.png
 scripts/vite.log
 test-results/
+
+.vercel

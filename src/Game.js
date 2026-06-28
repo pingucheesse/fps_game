@@ -6,6 +6,7 @@ import { RemotePlayer } from './player/RemotePlayer.js';
 import { Raycast } from './weapons/Raycast.js';
 import { HUD } from './ui/HUD.js';
 import { Minimap } from './ui/Minimap.js';
+import { HX, HZ } from './world/mapgen.js';
 import { SYNC_MS } from './constants.js';
 
 const MAX_HP    = 100;
@@ -19,6 +20,8 @@ const MAX_AMMO     = 20;
 const RELOAD_MS    = 1700;  // full reload (particles pull back into a gun)
 const REGEN_IDLE_S = 1.0;   // idle time before slow ammo regen kicks in
 const REGEN_EVERY_S = 0.6;  // one round restored every this many seconds
+const REGEN_FAST_AT = 15;   // at/above this ammo, regen 3 at a time
+const INTERMISSION_S = 10;  // between-round intermission with the dividing walls
 
 // Knife wall-damage — no sigma override; uses wall's natural hole size
 const KNIFE_WALL = { strength: 0.9, maxDisplace: 0.003 };
@@ -65,6 +68,11 @@ export class Game {
     this._syncAccum = 0;
     this._prevTime  = 0;
     this._particles = [];
+
+    // Between-round intermission + dividing walls
+    this._dividers     = [];
+    this._intermission = false;
+    this._intermissionEnd = 0;
 
     // Ammo
     this._ammo       = MAX_AMMO;
@@ -114,38 +122,90 @@ export class Game {
     this._particles.length = 0;
   }
 
-  _applyNewMap(seed, winnerId) {
-    this.wallManager.loadMap(seed);
-    this.minimap.reload(this.wallManager);
-
-    this._clearParticles();
-    this.hp    = MAX_HP;
-    this.armor = MAX_ARMOR;
-    this.hud.setHealth(this.hp, this.armor);
-    const localSpawn = this._pickSpawn(this._remotePositions());
-    this.localPlayer.respawn(localSpawn);
-
-    // Place opponents on the far side from where we just spawned
-    for (const rp of this.remotePlayers.values()) {
-      const spawn = this._pickSpawn([localSpawn]);
-      rp.group.position.copy(spawn);
-      rp._targetPos.copy(spawn);
-    }
-
-    if (winnerId && this.net && winnerId === this.net.myId) {
-      this.hud.showNotification('You win! New map');
-    } else if (winnerId) {
-      this.hud.showNotification('Round over — new map');
-    } else {
-      this.hud.showNotification('New map');
-    }
+  // Host (or singleplayer) starts a fresh round and tells everyone to reset.
+  _triggerRoundReset() {
+    this._mapRound++;
+    if (this.net) this.net.send({ type: 'roundReset', round: this._mapRound });
+    this._beginRound();
   }
 
-  _swapMap(winnerId) {
-    this._mapRound++;
-    const seed = `${this._baseSeed}-r${this._mapRound}`;
-    this._applyNewMap(seed, winnerId);
-    return seed;
+  // Reset the SAME map (clear all damage), split it into sections behind opaque
+  // dividing walls, drop each player into their own section, and run the
+  // intermission. The walls drop and the fight resumes when the timer ends.
+  _beginRound() {
+    this._clearDividers();
+    this.wallManager.loadMap(this._baseSeed); // same map, pristine
+    this.minimap.reload(this.wallManager);
+    this._clearParticles();
+
+    this.hp = MAX_HP; this.armor = MAX_ARMOR; this.hud.setHealth(this.hp, this.armor);
+    this._ammo = MAX_AMMO; this._reloading = false;
+    this.localPlayer.gun.setAmmoFraction(1); this.hud.setAmmo(this._ammo, MAX_AMMO);
+
+    const count = 1 + this.remotePlayers.size;
+    const sections = count >= 3 ? 4 : count === 2 ? 2 : 1;
+    this._spawnDividers(sections);
+
+    // Put each player in their own section (consistent across clients via id sort)
+    const myId = this.net ? this.net.myId : 'me';
+    const ids  = [myId, ...this.remotePlayers.keys()].sort();
+    const spawnFor = (id) => sections >= 2
+      ? this._sectionSpawn(ids.indexOf(id) % sections, sections)
+      : this._pickSpawn();
+    this.localPlayer.respawn(spawnFor(myId));
+    for (const [id, rp] of this.remotePlayers) {
+      const sp = spawnFor(id);
+      rp.group.position.copy(sp); rp._targetPos.copy(sp);
+    }
+
+    // Only split rounds (2+ players) get the dividing-wall intermission
+    this._intermission = sections >= 2;
+    if (this._intermission) {
+      this._intermissionEnd = performance.now() + INTERMISSION_S * 1000;
+    } else {
+      this.hud.hideIntermission();
+    }
+    this.hud.showNotification('Round reset');
+  }
+
+  // ── Dividing walls (opaque, collidable; halves for 2, quadrants for 3-4) ────
+  _clearDividers() {
+    for (const d of this._dividers) {
+      this.scene.remove(d.mesh);
+      d.mesh.geometry.dispose();
+      d.mesh.material.dispose();
+    }
+    this._dividers = [];
+  }
+
+  _spawnDividers(sections) {
+    this._clearDividers();
+    if (sections < 2) return;
+    const H = 4, T = 0.5;
+    const add = (w, h, d, x, z) => {
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshLambertMaterial({ color: 0x33384a }),
+      );
+      mesh.position.set(x, h / 2, z);
+      this.scene.add(mesh);
+      this._dividers.push({ mesh, box: new THREE.Box3().setFromObject(mesh) });
+    };
+    add(T, H, 2 * HZ, 0, 0);                    // wall along x=0 → left / right halves
+    if (sections >= 4) add(2 * HX, H, T, 0, 0); // wall along z=0 → quadrants (a cross)
+  }
+
+  _sectionSpawn(section, sections) {
+    const pts = this.wallManager.spawnPoints;
+    if (sections === 2) {
+      const side = section === 0 ? -1 : 1;
+      const c = pts.find(p => Math.sign(p.x) === side);
+      return c ? c.clone() : new THREE.Vector3(side * HX * 0.5, 0, 0);
+    }
+    const sx = section % 2 === 0 ? -1 : 1;
+    const sz = section < 2 ? -1 : 1;
+    const c = pts.find(p => Math.sign(p.x) === sx && Math.sign(p.z) === sz);
+    return c ? c.clone() : new THREE.Vector3(sx * HX * 0.5, 0, sz * HZ * 0.5);
   }
 
   // ── Input ─────────────────────────────────────────────────────────────────
@@ -164,6 +224,7 @@ export class Game {
 
   // ── Gun fire ──────────────────────────────────────────────────────────────
   _fire() {
+    if (this._intermission) return;
     if (this._reloading) return;
     if (this._ammo <= 0) { this._startReload(); return; }
     if (!this.localPlayer.gun.canFire) return;
@@ -227,6 +288,7 @@ export class Game {
 
   // ── Quick melee (V) — shows knife briefly, auto-returns to gun ───────────
   _quickStab() {
+    if (this._intermission) return;
     this.localPlayer.quickStab();
 
     const camera = this.localPlayer.camera;
@@ -512,8 +574,11 @@ export class Game {
 
     this.hp    = MAX_HP;
     this.armor = MAX_ARMOR;
-    this.localPlayer.respawn(this._pickSpawn(this._remotePositions()));
     this.hud.setHealth(this.hp, this.armor);
+
+    // Round resets the map every death. The host (or singleplayer) orchestrates;
+    // a non-host client just reported the death and waits for the host's reset.
+    if (!this.net || this.net.isHost) this._triggerRoundReset();
   }
 
   // ── Network ───────────────────────────────────────────────────────────────
@@ -561,16 +626,12 @@ export class Game {
         this._kills++;
         this.hud.setScore(this._kills, this._deaths);
       }
-
-      if (msg.killerId && net.isHost) {
-        const seed = this._swapMap(msg.killerId);
-        net.send({ type: 'newMap', seed, winnerId: msg.killerId });
-      }
+      // Host orchestrates the round reset whenever anyone dies
+      if (net.isHost) this._triggerRoundReset();
     });
 
-    net.on('newMap', (msg) => {
-      if (net.isHost) return;
-      this._applyNewMap(msg.seed, msg.winnerId);
+    net.on('roundReset', () => {
+      if (!net.isHost) this._beginRound();
     });
 
     net.on('worldState', (msg) => {
@@ -618,10 +679,22 @@ export class Game {
     const dt  = Math.min((now - this._prevTime) / 1000, 0.05);
     this._prevTime = now;
 
-    this.localPlayer.update(dt, this.wallManager);
+    this.localPlayer.update(dt, this.wallManager, this._dividers);
     for (const rp of this.remotePlayers.values()) rp.update(dt);
     this._updateParticles(dt);
     this.hud.update(dt);
+
+    // Intermission countdown — drop the dividing walls when it ends
+    if (this._intermission) {
+      const remain = (this._intermissionEnd - performance.now()) / 1000;
+      if (remain <= 0) {
+        this._intermission = false;
+        this._clearDividers();
+        this.hud.hideIntermission();
+      } else {
+        this.hud.setIntermission(Math.ceil(remain));
+      }
+    }
 
     if (this._reloading) {
       // Smoothly converge the gun home over RELOAD_MS (handled by the gun)
@@ -639,7 +712,8 @@ export class Game {
       this._regenAccum += dt;
       if (this._regenAccum >= REGEN_EVERY_S) {
         this._regenAccum = 0;
-        this._ammo++;
+        const step = this._ammo >= REGEN_FAST_AT ? 3 : 1; // 3 at a time once topped up
+        this._ammo = Math.min(MAX_AMMO, this._ammo + step);
         this.localPlayer.gun.setAmmoFraction(this._ammo / MAX_AMMO);
         this.localPlayer.gun.flourish(14); // blue particles float into the barrel
         this.hud.setAmmo(this._ammo, MAX_AMMO);
@@ -670,6 +744,7 @@ export class Game {
 
   dispose() {
     cancelAnimationFrame(this._animId);
+    this._clearDividers();
     if (this.net) this.net.disconnect();
   }
 }

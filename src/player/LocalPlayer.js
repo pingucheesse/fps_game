@@ -49,8 +49,8 @@ export class LocalPlayer {
     this._stabReturn = true;
   }
 
-  update(dt, wallManager) {
-    this.controller.update(dt, wallManager);
+  update(dt, wallManager, dividers = []) {
+    this.controller.update(dt, wallManager, dividers);
     this.gun.update(dt);
     this.knife.update(dt);
 
