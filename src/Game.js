@@ -6,7 +6,7 @@ import { RemotePlayer } from './player/RemotePlayer.js';
 import { Raycast } from './weapons/Raycast.js';
 import { HUD } from './ui/HUD.js';
 import { Minimap } from './ui/Minimap.js';
-import { WIRE_RADIUS } from './weapons/DartGun.js';
+import { WIRE_RADIUS, DART_MAX } from './weapons/DartGun.js';
 import { HX, HZ } from './world/mapgen.js';
 import { SYNC_MS } from './constants.js';
 
@@ -53,6 +53,13 @@ export class Game {
     this._meleeRaycaster = new THREE.Raycaster();
     this._meleeRaycaster.far = KNIFE_RANGE;
     this._dartCaster = new THREE.Raycaster();
+
+    // A single dart discharges where it lands, not at fire time.
+    this.localPlayer.dartGun.onLand = (dg) => this._onDartSingleLand(dg);
+
+    // Predictive reticle: shows where the dart will land while the dart gun is up.
+    this._dartReticle = this._makeDartReticle();
+    this.scene.add(this._dartReticle);
 
     this.hp    = MAX_HP;
     this.armor = MAX_ARMOR;
@@ -357,14 +364,26 @@ export class Game {
     if (dg.singleOut) { dg.retract(); return; }   // 2nd click retracts
     if (dg.deployed) return;                       // a triangle is out
 
-    const cam = this.localPlayer.camera;
-    const dir = new THREE.Vector3(); cam.getWorldDirection(dir);
+    // Aim from the muzzle toward where the camera-centred reticle points, so the
+    // dart converges on the crosshair instead of flying parallel off to the side.
+    const cam = this.localPlayer.camera; cam.updateMatrixWorld();
+    const eye = new THREE.Vector3(); cam.getWorldPosition(eye);
+    const fwd = new THREE.Vector3(); cam.getWorldDirection(fwd);
+    const target = this._predictDartLanding(eye, fwd, this._dartTargets()).point;
+    const dir = target.sub(dg.muzzleWorld).normalize();
     dg.fireSingle(dir);
+    // Damage is dealt when the dart lands → see _onDartSingleLand().
+  }
 
-    // The wire shocks instantly: 50 to anything along the line gun → impact
-    const origin = dg.muzzleWorld;
-    const end = this._wallClip(origin, dir, 16);
-    this._dartLineDamage(origin, end, WIRE_RADIUS, 50);
+  // The single dart's wire shocks the moment it lands: 50 to anything along the
+  // line gun → impact, plus a visible spark burst so the discharge reads clearly.
+  _onDartSingleLand(dg) {
+    const tips = dg.getTips();
+    if (!tips.length) return;
+    const tip    = tips[0];
+    const origin = dg.anchor;
+    this._dartLineDamage(origin, tip, WIRE_RADIUS, 50);
+    this._spawnSparks(tip, false);
   }
 
   _dartRight() {
@@ -379,17 +398,102 @@ export class Game {
     }
     if (dg.deployed) return;                         // need all 3 darts (nothing out)
 
+    // Aim each triangle dart from the muzzle toward its reticle-predicted landing
+    // point (same spread the preview rings show), so they converge on-screen.
     const cam = this.localPlayer.camera; cam.updateMatrixWorld();
+    const eye   = new THREE.Vector3(); cam.getWorldPosition(eye);
     const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
     const up    = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
     const fwd   = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 2).negate();
-    dg.fireTriangle(fwd, up, right);
+    const muzzle  = dg.muzzleWorld;
+    const targets = this._dartTargets();
+    const dirs = this._triangleDirs(fwd, up, right).map((d) => {
+      const p = this._predictDartLanding(eye, d, targets).point;
+      return p.sub(muzzle).normalize();
+    });
+    dg.fireTriangle(dirs);
   }
 
-  _wallClip(origin, dir, maxR) {
-    this._dartCaster.set(origin, dir.clone().normalize()); this._dartCaster.far = maxR;
-    const hits = this._dartCaster.intersectObjects(this.wallManager.meshes, false);
-    return hits.length > 0 ? hits[0].point.clone() : origin.clone().addScaledVector(dir, maxR);
+  // The three spread directions for a right-click triangle (apex, lower-left,
+  // lower-right). Shared by the firing code and the preview reticle.
+  _triangleDirs(fwd, up, right) {
+    const a = 0.16;
+    return [
+      fwd.clone().addScaledVector(up, a).normalize(),
+      fwd.clone().addScaledVector(up, -a * 0.5).addScaledVector(right, -a * 0.87).normalize(),
+      fwd.clone().addScaledVector(up, -a * 0.5).addScaledVector(right,  a * 0.87).normalize(),
+    ];
+  }
+
+  // Predicted-impact markers: one big ring (left-click single dart) plus three
+  // small rings showing where the right-click triangle darts would land.
+  _makeDartReticle() {
+    const g = new THREE.Group();
+    const mkRing = (rIn, rOut, opacity) => {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x66ccff, transparent: true, opacity,
+        side: THREE.DoubleSide, depthTest: false, depthWrite: false,
+      });
+      return new THREE.Mesh(new THREE.RingGeometry(rIn, rOut, 24), mat);
+    };
+    // [0] main ring, [1] centre dot, [2..4] triangle markers
+    g.add(mkRing(0.13, 0.17, 0.85));
+    g.add(new THREE.Mesh(new THREE.CircleGeometry(0.03, 14),
+      new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.85,
+        side: THREE.DoubleSide, depthTest: false, depthWrite: false })));
+    for (let i = 0; i < 3; i++) g.add(mkRing(0.06, 0.09, 0.6));
+    g.renderOrder = 999;
+    g.visible = false;
+    return g;
+  }
+
+  // Targets a dart can stick to: every wall plus the floor.
+  _dartTargets() { return [this.world.floor, ...this.wallManager.meshes]; }
+
+  // Cast a ray and return the impact point + surface normal (or the burn-out
+  // point in mid-air if nothing is within dart range).
+  _predictDartLanding(origin, dir, targets) {
+    this._dartCaster.set(origin, dir); this._dartCaster.far = DART_MAX;
+    const hits = this._dartCaster.intersectObjects(targets, false);
+    if (hits.length > 0) {
+      const normal = hits[0].face
+        ? hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld)
+        : dir.clone().negate();
+      return { point: hits[0].point.clone(), normal };
+    }
+    return { point: origin.clone().addScaledVector(dir, DART_MAX), normal: dir.clone().negate() };
+  }
+
+  _placeMarker(mesh, origin, dir, targets) {
+    const { point, normal } = this._predictDartLanding(origin, dir, targets);
+    mesh.position.copy(point).addScaledVector(normal, 0.02);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+  }
+
+  // Park the single-dart ring under the crosshair, and the three smaller rings
+  // where a right-click triangle would land (same spread as fireTriangle()).
+  _updateDartReticle() {
+    const show = this.localPlayer.weapon === 'dart'
+      && this.localPlayer.isLocked && !this._intermission;
+    this._dartReticle.visible = show;
+    if (!show) return;
+
+    const cam = this.localPlayer.camera; cam.updateMatrixWorld();
+    const origin = new THREE.Vector3(); cam.getWorldPosition(origin);
+    const fwd    = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 2).negate();
+    const right  = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
+    const up     = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
+    const targets = this._dartTargets();
+
+    // Single dart (left click)
+    this._placeMarker(this._dartReticle.children[0], origin, fwd.clone(), targets);
+    const main = this._predictDartLanding(origin, fwd.clone(), targets);
+    this._dartReticle.children[1].position.copy(main.point).addScaledVector(main.normal, 0.021);
+    this._dartReticle.children[1].quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), main.normal);
+
+    // Triangle spread (right click) — same directions the actual shot uses
+    const tri = this._triangleDirs(fwd, up, right);
+    for (let i = 0; i < 3; i++) this._placeMarker(this._dartReticle.children[2 + i], origin, tri[i], targets);
   }
 
   _segDist(p, a, b) {
@@ -783,9 +887,10 @@ export class Game {
     const dt  = Math.min((now - this._prevTime) / 1000, 0.05);
     this._prevTime = now;
 
-    this.localPlayer.update(dt, this.wallManager, this._dividers);
+    this.localPlayer.update(dt, this.wallManager, this._dividers, [this.world.floor]);
     for (const rp of this.remotePlayers.values()) rp.update(dt);
     this._updateParticles(dt);
+    this._updateDartReticle();
     this.hud.update(dt);
 
     // Intermission countdown — drop the dividing walls when it ends

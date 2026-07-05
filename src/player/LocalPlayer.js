@@ -64,11 +64,12 @@ export class LocalPlayer {
     this._stabReturn = true;
   }
 
-  update(dt, wallManager, dividers = []) {
+  update(dt, wallManager, dividers = [], extraDartTargets = []) {
     this.controller.update(dt, wallManager, dividers);
     this.gun.update(dt);
     this.knife.update(dt);
-    this.dartGun.update(dt, wallManager ? wallManager.meshes : []);
+    const dartTargets = wallManager ? [...wallManager.meshes, ...extraDartTargets] : extraDartTargets;
+    this.dartGun.update(dt, dartTargets);
 
     // Once the stab animation ends, restore the active weapon automatically
     if (this._stabReturn && !this.knife.isStabbing) {

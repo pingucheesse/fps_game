@@ -34,6 +34,7 @@ export class World {
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
+    this.floor = floor;   // exposed so darts/reticle can stick to / aim at the ground
 
     // Grey grid lines sitting just above the floor
     const grid = new THREE.GridHelper(50, 50, 0xbbbbbb, 0xcccccc);
