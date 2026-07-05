@@ -19,6 +19,7 @@ export class Minimap {
       const b = w.getCollisionBox();
       return { x0: b.min.x, z0: b.min.z, x1: b.max.x, z1: b.max.z, wall: w, type: w.type };
     });
+    this._dirty = true;
   }
 
   _color(type) {
@@ -28,6 +29,16 @@ export class Minimap {
   }
 
   update(px, pz, yaw) {
+    // Perf: only redraw when the player actually moved/turned (or every ~30
+    // frames so destroyed walls still fall off the map).
+    this._skip = (this._skip ?? 0) + 1;
+    const moved = this._lx === undefined ||
+      Math.abs(px - this._lx) > 0.01 || Math.abs(pz - this._lz) > 0.01 ||
+      Math.abs(yaw - this._lyaw) > 0.005;
+    if (!moved && !this._dirty && this._skip < 30) return;
+    this._skip = 0; this._dirty = false;
+    this._lx = px; this._lz = pz; this._lyaw = yaw;
+
     const { ctx, cv } = this;
     const W = cv.width, H = cv.height;
     const s = (W / 2) / this.range; // px per metre

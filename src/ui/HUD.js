@@ -13,9 +13,32 @@ export class HUD {
     this._scoreEl     = document.getElementById('score-display');
     this._ammoEl      = document.getElementById('ammo-display');
     this._intermEl    = document.getElementById('intermission');
+    this._moneyEl     = document.getElementById('money-display');
+    this._buyEl       = document.getElementById('buy-menu');
     this._hitAlpha    = 0;
     this._notifTimer  = null;
     this._hmTimer     = null;
+  }
+
+  setMoney(m) {
+    if (this._moneyEl) { this._moneyEl.textContent = `$ ${m}`; this._moneyEl.style.display = 'block'; }
+  }
+
+  // items: [{ key, name, price, owned, affordable }]
+  showBuyMenu(items, money) {
+    if (!this._buyEl) return;
+    const rows = items.map(i => {
+      const cls   = i.owned ? 'owned' : i.affordable ? '' : 'poor';
+      const right = i.owned ? 'OWNED' : `$${i.price}`;
+      return `<div class="buy-row ${cls}"><span class="buy-key">${i.key}</span><span class="buy-name">${i.name}</span><span class="buy-price">${right}</span></div>`;
+    }).join('');
+    this._buyEl.innerHTML =
+      `<div class="buy-title">BUY &nbsp;·&nbsp; $${money}</div>${rows}<div class="buy-hint">press number to buy · B to close</div>`;
+    this._buyEl.style.display = 'block';
+  }
+
+  hideBuyMenu() {
+    if (this._buyEl) this._buyEl.style.display = 'none';
   }
 
   setIntermission(seconds) {

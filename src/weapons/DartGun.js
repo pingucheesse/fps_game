@@ -1,34 +1,73 @@
 import * as THREE from 'three';
 
-// A chunky shotgun-looking dart launcher.
+// Triple-tube dart launcher.
 //  • Left click  : fire ONE slow dart trailing a wire. The wire shocks (50) the
 //                  moment the dart LANDS — when it sticks to a wall, or burns out
 //                  its range mid-air. Left click again retracts an out dart.
 //  • Right click : (needs all 3 darts) fire 3 darts in a triangle, all wired to
 //                  the gun → a pyramid. Right click again electrifies it: 40 to
 //                  anyone inside the triangle, +40 to anyone touching a wire.
-//  Darts travel slowly; a single dart always discharges where it lands.
+//  Darts launch along the CAMERA rays (passed in by Game), so they land exactly
+//  on the predictive reticle; the wire still visually anchors to the gun.
 
-const DARK  = new THREE.MeshLambertMaterial({ color: 0x202024 });
-const METAL = new THREE.MeshLambertMaterial({ color: 0x3a3a42 });
+const DARK  = new THREE.MeshLambertMaterial({ color: 0x1c1c22 });
+const METAL = new THREE.MeshLambertMaterial({ color: 0x34343e });
+const GLOW  = new THREE.MeshLambertMaterial({ color: 0x0c2a3a, emissive: 0x2288ff, emissiveIntensity: 0.9 });
 
 const REST_Z     = -0.30;
 const DART_SPEED = 11;   // m/s — not too fast
 export const DART_MAX   = 16;   // a single dart discharges here if it never sticks
 export const WIRE_RADIUS = 0.6;
 
+const MAX_SEGS = 6;
+const DART_GEO = new THREE.BoxGeometry(0.02, 0.02, 0.07);
+const DART_MAT = new THREE.MeshLambertMaterial({ color: 0x9fe6ff, emissive: 0x1177cc, emissiveIntensity: 0.5 });
+
+// Cylinder along the z axis (barrel tube)
+function tube(r, len) {
+  const geo = new THREE.CylinderGeometry(r, r, len, 8);
+  geo.rotateX(Math.PI / 2);
+  return geo;
+}
+
 export class DartGun {
   constructor(camera, scene) {
     this.scene = scene;
     const g = new THREE.Group();
 
-    const body    = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.058, 0.20), DARK);  body.position.set(0, -0.01, -0.04); g.add(body);
-    const barrelL = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.024, 0.24), METAL); barrelL.position.set(-0.015, 0.006, -0.17); g.add(barrelL);
-    const barrelR = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.024, 0.24), METAL); barrelR.position.set( 0.015, 0.006, -0.17); g.add(barrelR);
-    const pump    = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.032, 0.08), DARK);  pump.position.set(0, -0.034, -0.12); g.add(pump);
-    const stock   = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.058, 0.11), DARK);  stock.position.set(0, -0.02, 0.11); g.add(stock);
+    // Receiver — chunky boxy core
+    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.062, 0.052, 0.16), DARK);
+    receiver.position.set(0, -0.008, -0.02); g.add(receiver);
 
-    this.muzzle = new THREE.Object3D(); this.muzzle.position.set(0, 0.006, -0.30); g.add(this.muzzle);
+    // Three dart tubes in TRIANGLE formation (matches the 3-dart special):
+    // one on top, two below.
+    const tubeGeo = tube(0.011, 0.26);
+    const t1 = new THREE.Mesh(tubeGeo, METAL); t1.position.set(0, 0.024, -0.16); g.add(t1);
+    const t2 = new THREE.Mesh(tubeGeo, METAL); t2.position.set(-0.017, -0.002, -0.16); g.add(t2);
+    const t3 = new THREE.Mesh(tubeGeo, METAL); t3.position.set( 0.017, -0.002, -0.16); g.add(t3);
+
+    // Muzzle plate tying the tubes together
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.052, 0.016), DARK);
+    plate.position.set(0, 0.01, -0.284); g.add(plate);
+
+    // Glowing energy strips on the receiver flanks + a core glow between tubes
+    const stripGeo = new THREE.BoxGeometry(0.004, 0.012, 0.12);
+    const s1 = new THREE.Mesh(stripGeo, GLOW); s1.position.set(-0.033, 0.002, -0.03); g.add(s1);
+    const s2 = new THREE.Mesh(stripGeo, GLOW); s2.position.set( 0.033, 0.002, -0.03); g.add(s2);
+    const core = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.012, 0.2), GLOW);
+    core.position.set(0, 0.008, -0.16); g.add(core);
+
+    // Pump foregrip, angled grip, stock, front sight
+    const pump = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.028, 0.07), METAL);
+    pump.position.set(0, -0.048, -0.16); g.add(pump);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.062, 0.045), DARK);
+    grip.position.set(0, -0.058, 0.035); grip.rotation.x = 0.28; g.add(grip);
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.046, 0.09), DARK);
+    stock.position.set(0, -0.012, 0.10); g.add(stock);
+    const sight = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.014, 0.018), DARK);
+    sight.position.set(0, 0.042, -0.26); g.add(sight);
+
+    this.muzzle = new THREE.Object3D(); this.muzzle.position.set(0, 0.01, -0.30); g.add(this.muzzle);
 
     g.position.set(0.18, -0.14, REST_Z);
     g.visible = false;
@@ -38,9 +77,17 @@ export class DartGun {
     this._kick  = 0;
     this._caster = new THREE.Raycaster();
     this._deployment = null;
-    this._wireMat = new THREE.LineBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.9 });
-    this._wire = null;
     this.onLand = null;   // called once with (this) when a single dart discharges
+
+    // Wire: one LineSegments with a preallocated buffer (no per-frame allocation)
+    this._wireBuf = new Float32Array(MAX_SEGS * 6);
+    const wireGeo = new THREE.BufferGeometry();
+    wireGeo.setAttribute('position', new THREE.BufferAttribute(this._wireBuf, 3).setUsage(THREE.DynamicDrawUsage));
+    this._wire = new THREE.LineSegments(wireGeo,
+      new THREE.LineBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.9 }));
+    this._wire.frustumCulled = false;
+    this._wire.visible = false;
+    scene.add(this._wire);
   }
 
   get visible()  { return this._group.visible; }
@@ -48,50 +95,49 @@ export class DartGun {
   get deployed()    { return !!this._deployment; }
   get singleOut()   { return this._deployment?.type === 'single'; }
   get triangleOut() { return this._deployment?.type === 'triangle'; }
+  get electrified() { return !!this._deployment?.electrified; }
   get muzzleWorld() { const p = new THREE.Vector3(); this.muzzle.getWorldPosition(p); return p; }
-  // Where the wire is anchored: the launch point, frozen at fire time so walking
-  // around afterwards never moves/erases the line. Falls back to the live muzzle.
+  // Wire anchor: the launch point, frozen at fire time so walking around
+  // afterwards never moves/erases the line. Falls back to the live muzzle.
   get anchor() { return this._deployment ? this._deployment.origin.clone() : this.muzzleWorld; }
 
-  _mkDart(dir) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 0.07),
-      new THREE.MeshLambertMaterial({ color: 0x9fe6ff }));
-    const tip = this.muzzleWorld;
+  _mkDart(start, dir) {
+    const mesh = new THREE.Mesh(DART_GEO, DART_MAT);
+    const tip = start.clone();
     mesh.position.copy(tip);
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.clone().normalize());
     this.scene.add(mesh);
     return { mesh, dir: dir.clone().normalize(), tip, dist: 0, stuck: false };
   }
 
-  fireSingle(dir) {
+  // start: launch position on the camera ray (Game passes eye + small offset) so
+  // the dart's path IS the reticle ray → it lands exactly where the ring shows.
+  fireSingle(start, dir) {
     this._kick = 0.1;
-    this._deployment = { type: 'single', origin: this.muzzleWorld, darts: [this._mkDart(dir)], electrified: false };
+    this._deployment = { type: 'single', origin: this.muzzleWorld, darts: [this._mkDart(start, dir)], electrified: false };
     this._rebuildWire();
   }
 
-  // dirs: three already-aimed unit directions (one per dart), computed by the
-  // caller so the darts converge on the on-screen reticle rather than flying
-  // parallel out of the off-centre muzzle.
-  fireTriangle(dirs) {
+  fireTriangle(start, dirs) {
     this._kick = 0.14;
-    this._deployment = { type: 'triangle', origin: this.muzzleWorld, darts: dirs.map(d => this._mkDart(d)), electrified: false };
+    this._deployment = { type: 'triangle', origin: this.muzzleWorld, darts: dirs.map(d => this._mkDart(start, d)), electrified: false };
     this._rebuildWire();
   }
 
   electrify() {
-    if (!this._deployment) return;
+    if (!this._deployment || this._deployment.electrified) return false;
     this._deployment.electrified = true;
     this._deployment.electrifyTime = 0;
-    if (this._wire) this._wire.material.color.setHex(0xffee44);
+    this._wire.material.color.setHex(0xffee44);
+    return true;
   }
 
   retract() {
     if (!this._deployment) return;
-    for (const d of this._deployment.darts) {
-      this.scene.remove(d.mesh); d.mesh.geometry.dispose(); d.mesh.material.dispose();
-    }
-    if (this._wire) { this.scene.remove(this._wire); this._wire.geometry.dispose(); this._wire.material.dispose(); this._wire = null; }
+    for (const d of this._deployment.darts) this.scene.remove(d.mesh); // shared geo/mat — no dispose
     this._deployment = null;
+    this._wire.visible = false;
+    this._wire.material.color.setHex(0x66ccff);
   }
 
   getTips() { return this._deployment ? this._deployment.darts.map(d => d.tip.clone()) : []; }
@@ -106,18 +152,16 @@ export class DartGun {
 
   _rebuildWire() {
     const segs = this.getWireSegments();
-    const pts = [];
-    for (const [a, b] of segs) pts.push(a.x, a.y, a.z, b.x, b.y, b.z);
-    if (!this._wire) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-      this._wire = new THREE.LineSegments(geo, this._wireMat.clone());
-      this.scene.add(this._wire);
-    } else {
-      this._wire.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-      this._wire.geometry.attributes.position.needsUpdate = true;
+    const buf = this._wireBuf;
+    let o = 0;
+    for (const [a, b] of segs) {
+      buf[o++] = a.x; buf[o++] = a.y; buf[o++] = a.z;
+      buf[o++] = b.x; buf[o++] = b.y; buf[o++] = b.z;
     }
-    if (this._deployment?.electrified) this._wire.material.color.setHex(0xffee44);
+    const attr = this._wire.geometry.attributes.position;
+    attr.needsUpdate = true;
+    this._wire.geometry.setDrawRange(0, segs.length * 2);
+    this._wire.visible = segs.length > 0;
   }
 
   update(dt, wallMeshes) {

@@ -3,6 +3,36 @@
 Update log of notable changes. The game is live at https://fps-game-ruddy.vercel.app
 (auto-deploys from `main`).
 
+## 2026-07-05
+
+### Added — Buy menu & economy
+- Press **B** to open the buy menu (number keys purchase, B closes). Start with
+  **$600**; earn **$400 per kill** and **$150 per round**.
+- Items: **Dart Launcher $600** (required before you can equip weapon 2),
+  **Armor refill $300**, **Health refill $250**. Money shows above the HP bar.
+
+### Changed — Dart launcher
+- **New model:** chunky triple-tube launcher (tubes arranged in a triangle to
+  match the 3-dart special) with glowing blue energy strips.
+- **Exact alignment:** darts now launch along the camera/reticle rays, so they
+  land precisely on the predicted rings (single + all three triangle darts).
+
+### Fixed — Bug sweep
+- Electrifying the triangle repeatedly (spam right-click during the discharge
+  flash) no longer re-deals damage each click.
+- Pistol shots now hit the **nearest** player on the ray, not an arbitrary one,
+  when two players line up.
+
+### Multiplayer fairness
+- Your deployed dart wires are now **visible to other players** (synced over the
+  network, glow yellow when electrified) — no more invisible-wire damage.
+- Other players now see which weapon you're holding (pistol vs dart launcher).
+
+### Performance
+- Pistol particle cloud (~3.4k instances) skips per-frame updates once fully
+  settled; dart wires reuse a preallocated buffer; minimap only redraws when you
+  move; renderer requests the high-performance GPU.
+
 ## 2026-06-28
 
 ### Changed — Dart gun (single dart)

@@ -19,6 +19,16 @@ const KNIFE_RANGE = 1.5; // metres
 
 const MAX_AMMO     = 20;
 const RELOAD_MS    = 1700;  // full reload (particles pull back into a gun)
+
+// Economy (per-player, symmetric → fair)
+const START_MONEY   = 600;
+const KILL_REWARD   = 400;
+const ROUND_REWARD  = 150;
+const BUY_ITEMS = [
+  { key: '1', name: 'Dart Launcher', price: 600, id: 'dart'   },
+  { key: '2', name: 'Armor refill',  price: 300, id: 'armor'  },
+  { key: '3', name: 'Health refill', price: 250, id: 'health' },
+];
 const REGEN_IDLE_S = 1.0;   // idle time before slow ammo regen kicks in
 const REGEN_EVERY_S = 0.6;  // one round restored every this many seconds
 const REGEN_FAST_AT = 15;   // at/above this ammo, regen 3 at a time
@@ -72,6 +82,12 @@ export class Game {
     this._deaths         = 0;
     this._lastAttackerId = null;
     this.hud.setScore(0, 0);
+
+    // Economy / buy menu
+    this._money     = START_MONEY;
+    this._ownedDart = false;
+    this._buyOpen   = false;
+    this.hud.setMoney(this._money);
 
     this._animId    = null;
     this._syncAccum = 0;
@@ -144,6 +160,8 @@ export class Game {
   _beginRound() {
     this._clearDividers();
     this.localPlayer.dartGun.retract();
+    if (this._buyOpen) this._toggleBuyMenu();
+    this._award(ROUND_REWARD); // everyone earns per round — symmetric, fair
     this.wallManager.loadMap(this._baseSeed); // same map, pristine
     this.minimap.reload(this.wallManager);
     this._clearParticles();
@@ -223,7 +241,7 @@ export class Game {
     document.addEventListener('contextmenu', (e) => { if (this.localPlayer.isLocked) e.preventDefault(); });
 
     document.addEventListener('mousedown', (e) => {
-      if (!this.localPlayer.isLocked) return;
+      if (!this.localPlayer.isLocked || this._buyOpen) return;
       const dart = this.localPlayer.weapon === 'dart';
       if (e.button === 0) { dart ? this._dartLeft() : this._fire(); }
       else if (e.button === 2 && dart) { this._dartRight(); }
@@ -231,11 +249,65 @@ export class Game {
 
     document.addEventListener('keydown', (e) => {
       if (e.repeat || !this.localPlayer.isLocked) return;
+
+      if (e.code === 'KeyB') { this._toggleBuyMenu(); return; }
+      if (this._buyOpen) {
+        // While the buy menu is open, number keys purchase instead of switching
+        const item = BUY_ITEMS.find(i => e.code === `Digit${i.key}`);
+        if (item) this._buy(item);
+        return;
+      }
+
       if (e.code === 'Digit1') this.localPlayer.equip('pistol');
-      if (e.code === 'Digit2') this.localPlayer.equip('dart');
+      if (e.code === 'Digit2') {
+        if (this._ownedDart) this.localPlayer.equip('dart');
+        else this.hud.showNotification('Dart Launcher not owned — press B to buy');
+      }
       if (e.code === 'KeyV') this._quickStab();
       if (e.code === 'KeyR' && this.localPlayer.weapon === 'pistol' && !this._reloading && this._ammo < MAX_AMMO) this._startReload();
     });
+  }
+
+  // ── Buy menu ────────────────────────────────────────────────────────────────
+  _toggleBuyMenu() {
+    this._buyOpen = !this._buyOpen;
+    if (this._buyOpen) this._refreshBuyMenu();
+    else this.hud.hideBuyMenu();
+  }
+
+  _refreshBuyMenu() {
+    this.hud.showBuyMenu(BUY_ITEMS.map(i => ({
+      ...i,
+      owned:      i.id === 'dart' && this._ownedDart,
+      affordable: this._money >= i.price,
+    })), this._money);
+  }
+
+  _buy(item) {
+    if (item.id === 'dart' && this._ownedDart) return;
+    if (this._money < item.price) { this.hud.showNotification('Not enough money'); return; }
+
+    if (item.id === 'dart') {
+      this._ownedDart = true;
+      this.localPlayer.equip('dart');
+      this.hud.showNotification('Dart Launcher purchased (key 2)');
+    } else if (item.id === 'armor') {
+      if (this.armor >= MAX_ARMOR) { this.hud.showNotification('Armor already full'); return; }
+      this.armor = MAX_ARMOR;
+    } else if (item.id === 'health') {
+      if (this.hp >= MAX_HP) { this.hud.showNotification('Health already full'); return; }
+      this.hp = MAX_HP;
+    }
+    this._money -= item.price;
+    this.hud.setMoney(this._money);
+    this.hud.setHealth(this.hp, this.armor);
+    this._refreshBuyMenu();
+  }
+
+  _award(amount) {
+    this._money += amount;
+    this.hud.setMoney(this._money);
+    if (this._buyOpen) this._refreshBuyMenu();
   }
 
   // ── Gun fire ──────────────────────────────────────────────────────────────
@@ -364,14 +436,12 @@ export class Game {
     if (dg.singleOut) { dg.retract(); return; }   // 2nd click retracts
     if (dg.deployed) return;                       // a triangle is out
 
-    // Aim from the muzzle toward where the camera-centred reticle points, so the
-    // dart converges on the crosshair instead of flying parallel off to the side.
+    // Launch along the camera ray itself: the dart's path IS the reticle ray, so
+    // it lands exactly where the ring shows (the wire still anchors to the gun).
     const cam = this.localPlayer.camera; cam.updateMatrixWorld();
     const eye = new THREE.Vector3(); cam.getWorldPosition(eye);
     const fwd = new THREE.Vector3(); cam.getWorldDirection(fwd);
-    const target = this._predictDartLanding(eye, fwd, this._dartTargets()).point;
-    const dir = target.sub(dg.muzzleWorld).normalize();
-    dg.fireSingle(dir);
+    dg.fireSingle(eye.clone().addScaledVector(fwd, 0.25), fwd);
     // Damage is dealt when the dart lands → see _onDartSingleLand().
   }
 
@@ -390,28 +460,21 @@ export class Game {
     if (this._intermission) return;
     const dg = this.localPlayer.dartGun;
 
-    if (dg.triangleOut) {                           // 2nd click electrifies
-      dg.electrify();
-      const tips = dg.getTips();
-      this._dartTriangleDamage(tips, dg.getWireSegments());
+    if (dg.triangleOut) {                           // 2nd click electrifies (once)
+      if (!dg.electrify()) return;                  // already discharging — no double dip
+      this._dartTriangleDamage(dg.getTips(), dg.getWireSegments());
       return;
     }
     if (dg.deployed) return;                         // need all 3 darts (nothing out)
 
-    // Aim each triangle dart from the muzzle toward its reticle-predicted landing
-    // point (same spread the preview rings show), so they converge on-screen.
+    // Launch the three darts along the exact spread rays the preview rings use,
+    // from the camera — so each dart lands on its ring.
     const cam = this.localPlayer.camera; cam.updateMatrixWorld();
     const eye   = new THREE.Vector3(); cam.getWorldPosition(eye);
     const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
     const up    = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
     const fwd   = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 2).negate();
-    const muzzle  = dg.muzzleWorld;
-    const targets = this._dartTargets();
-    const dirs = this._triangleDirs(fwd, up, right).map((d) => {
-      const p = this._predictDartLanding(eye, d, targets).point;
-      return p.sub(muzzle).normalize();
-    });
-    dg.fireTriangle(dirs);
+    dg.fireTriangle(eye.clone().addScaledVector(fwd, 0.25), this._triangleDirs(fwd, up, right));
   }
 
   // The three spread directions for a right-click triangle (apex, lower-left,
@@ -833,6 +896,7 @@ export class Game {
       if (msg.killerId === net.myId) {
         this._kills++;
         this.hud.setScore(this._kills, this._deaths);
+        this._award(KILL_REWARD);
       }
       // Host orchestrates the round reset whenever anyone dies
       if (net.isHost) this._triggerRoundReset();
@@ -936,7 +1000,8 @@ export class Game {
       this._syncAccum += dt * 1000;
       if (this._syncAccum >= SYNC_MS) {
         this._syncAccum -= SYNC_MS;
-        this.net.send({
+        const dg = this.localPlayer.dartGun;
+        const msg = {
           type:      'playerState',
           id:        this.net.myId,
           pos:       this.localPlayer.getPosition().toArray(),
@@ -944,7 +1009,17 @@ export class Game {
           pitch:     this.localPlayer.getPitch(),
           crouching: this.localPlayer.isCrouching,
           lean:      this.localPlayer.getLean(),
-        });
+          weapon:    this.localPlayer.weapon,
+        };
+        // Deployed dart wires ride along so opponents SEE them (fairness):
+        // flattened [ax,ay,az,bx,by,bz] per segment + whether they're live.
+        if (dg.deployed) {
+          const flat = [];
+          for (const [a, b] of dg.getWireSegments()) flat.push(a.x, a.y, a.z, b.x, b.y, b.z);
+          msg.wire = flat;
+          msg.wireHot = dg.electrified;
+        }
+        this.net.send(msg);
       }
     }
 

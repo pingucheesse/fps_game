@@ -57,6 +57,7 @@ export class Gun {
     this._reloading   = false;
     this._reloadPr    = 0;
     this._reloadSpread0 = 0;
+    this._settle      = 30;
 
     this._buildCloud();
 
@@ -128,6 +129,7 @@ export class Gun {
     // time (e.g. 6→7 on regen) glides between stages instead of snapping.
     this._spreadTarget = Math.max(0, Math.min(1, (MORPH_START - f) / MORPH_START));
     this._frac = f; // drives per-particle fade
+    this._settle = 30; // wake the cloud (it self-sleeps once fully settled)
   }
 
   // Begin a reload: smoothly converge from the current spread over the whole
@@ -195,6 +197,14 @@ export class Gun {
         ? (frac / SLIDE_BACK_FRAC) * SLIDE_TRAVEL
         : (1 - (frac - SLIDE_BACK_FRAC) / (1 - SLIDE_BACK_FRAC)) * SLIDE_TRAVEL;
     }
+
+    // Perf: once the cloud is fully settled (solid, no slide/reload/fx motion),
+    // skip repositioning all ~3.4k instances every frame until something wakes it.
+    const busy = this._reloading || this._slideT > 0 || this._reloadFx.length > 0 ||
+                 this._spread > 0.001 || Math.abs(this._spreadTarget - this._spread) > 0.001;
+    if (busy) this._settle = 30;
+    else if (this._settle > 0) this._settle--;
+    if (!busy && this._settle <= 0) return;
 
     // Position every instance (parented to the gun, so it follows you): home when
     // full, scattered + floating as it empties, slide particles racking back. Each

@@ -42,6 +42,29 @@ function makePistol() {
   return g;
 }
 
+const _matGlow = new THREE.MeshLambertMaterial({ color: 0x0c2a3a, emissive: 0x2288ff, emissiveIntensity: 0.9 });
+
+// Mini third-person dart launcher (triple tubes + glow core)
+function makeDartLauncher() {
+  const g = new THREE.Group();
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.045, 0.13), _matDark);
+  body.position.set(0, 0, 0.01);
+  g.add(body);
+
+  const tubeGeo = new THREE.BoxGeometry(0.016, 0.016, 0.16);
+  const t1 = new THREE.Mesh(tubeGeo, _matGrey); t1.position.set(0, 0.02, -0.1);      g.add(t1);
+  const t2 = new THREE.Mesh(tubeGeo, _matGrey); t2.position.set(-0.014, -0.005, -0.1); g.add(t2);
+  const t3 = new THREE.Mesh(tubeGeo, _matGrey); t3.position.set( 0.014, -0.005, -0.1); g.add(t3);
+
+  const core = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.14), _matGlow);
+  core.position.set(0, 0.007, -0.09);
+  g.add(core);
+
+  g.position.set(0.35, 1.2, -0.15);
+  return g;
+}
+
 function makeSunglasses() {
   const g = new THREE.Group();
   const lensGeo = new THREE.BoxGeometry(0.10, 0.06, 0.014);
@@ -87,6 +110,19 @@ export class RemotePlayer {
 
     this._gun = makePistol();
     this._leanPivot.add(this._gun);
+    this._dartLauncher = makeDartLauncher();
+    this._dartLauncher.visible = false;
+    this._leanPivot.add(this._dartLauncher);
+
+    // Their deployed dart wires (synced via playerState so we can SEE them)
+    this._wireBuf = new Float32Array(6 * 6);
+    const wireGeo = new THREE.BufferGeometry();
+    wireGeo.setAttribute('position', new THREE.BufferAttribute(this._wireBuf, 3).setUsage(THREE.DynamicDrawUsage));
+    this._wire = new THREE.LineSegments(wireGeo,
+      new THREE.LineBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.9 }));
+    this._wire.frustumCulled = false;
+    this._wire.visible = false;
+    scene.add(this._wire);
 
     this._pitchObj = new THREE.Object3D();
     this._pitchObj.position.y = EYE_HEIGHT;
@@ -121,6 +157,25 @@ export class RemotePlayer {
     if (msg.pitch     !== undefined) this._targetPitch = msg.pitch;
     if (msg.lean      !== undefined) this._targetLean  = msg.lean;
     if (msg.crouching !== undefined) this._crouching   = msg.crouching;
+
+    if (msg.weapon !== undefined) {
+      this._gun.visible          = msg.weapon !== 'dart';
+      this._dartLauncher.visible = msg.weapon === 'dart';
+    }
+
+    // Deployed dart wires: flattened [ax,ay,az,bx,by,bz] per segment, or absent
+    if (msg.type === 'playerState') {
+      if (msg.wire && msg.wire.length >= 6) {
+        const n = Math.min(msg.wire.length, this._wireBuf.length);
+        for (let i = 0; i < n; i++) this._wireBuf[i] = msg.wire[i];
+        this._wire.geometry.attributes.position.needsUpdate = true;
+        this._wire.geometry.setDrawRange(0, Math.floor(n / 3));
+        this._wire.material.color.setHex(msg.wireHot ? 0xffee44 : 0x66ccff);
+        this._wire.visible = true;
+      } else {
+        this._wire.visible = false;
+      }
+    }
   }
 
   update(dt) {
@@ -145,10 +200,15 @@ export class RemotePlayer {
     this._body.scale.y    = this._bodyScale;
     this._body.position.y = (BODY_TOTAL / 2) * this._bodyScale;
     this._gun.position.y  = this._eyeY * 0.75;
+    this._dartLauncher.position.y = this._eyeY * 0.75;
+    this._dartLauncher.rotation.x = this._gun.rotation.x;
   }
 
   dispose(scene) {
     scene.remove(this.group);
+    scene.remove(this._wire);
+    this._wire.geometry.dispose();
+    this._wire.material.dispose();
     this.group.traverse(o => { if (o.geometry) o.geometry.dispose(); });
   }
 }

@@ -23,11 +23,15 @@ export class Raycast {
     const wallDist = wallHits.length > 0 ? wallHits[0].distance : Infinity;
 
     if (remotePlayers) {
+      // Check every player and take the NEAREST hit along the ray, so a player
+      // standing behind another can't soak the shot meant for the front one.
+      let best = null;
       for (const [peerId, rp] of remotePlayers) {
         const res = this._playerHit(origin, rayDir, rp, wallDist);
-        if (res) {
-          return { origin, rayDir, hit: false, playerHit: true, peerId, hitType: res.type, hitPoint: res.point };
-        }
+        if (res && (!best || res.t < best.t)) best = { peerId, ...res };
+      }
+      if (best) {
+        return { origin, rayDir, hit: false, playerHit: true, peerId: best.peerId, hitType: best.type, hitPoint: best.point };
       }
     }
 
@@ -67,7 +71,7 @@ export class Raycast {
       const t   = toC.dot(direction);
       if (t < 0 || t > maxDist) continue;
       const closest = origin.clone().addScaledVector(direction, t);
-      if (closest.distanceTo(centre) < r) return { type, point: closest };
+      if (closest.distanceTo(centre) < r) return { type, point: closest, t };
     }
     return null;
   }
