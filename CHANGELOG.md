@@ -3,6 +3,16 @@
 Update log of notable changes. The game is live at https://fps-game-ruddy.vercel.app
 (auto-deploys from `main`).
 
+## 2026-07-05 (later)
+
+### Changed — Dart launcher feel
+- The wires now **follow the gun** as you move (anchored to the live muzzle
+  every frame, locally and for other players) instead of staying pinned at the
+  spot you fired from.
+- Darts fly **~2× faster** (24 m/s, still a visible projectile).
+- Added an **invisible roof** at wall height that darts stick to — you can now
+  anchor pyramid points overhead. Bullets and movement ignore it.
+
 ## 2026-07-05
 
 ### Added — Buy menu & economy

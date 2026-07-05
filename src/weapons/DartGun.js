@@ -15,7 +15,7 @@ const METAL = new THREE.MeshLambertMaterial({ color: 0x34343e });
 const GLOW  = new THREE.MeshLambertMaterial({ color: 0x0c2a3a, emissive: 0x2288ff, emissiveIntensity: 0.9 });
 
 const REST_Z     = -0.30;
-const DART_SPEED = 11;   // m/s — not too fast
+const DART_SPEED = 24;   // m/s — quick but still a visible projectile
 export const DART_MAX   = 16;   // a single dart discharges here if it never sticks
 export const WIRE_RADIUS = 0.6;
 
@@ -97,9 +97,8 @@ export class DartGun {
   get triangleOut() { return this._deployment?.type === 'triangle'; }
   get electrified() { return !!this._deployment?.electrified; }
   get muzzleWorld() { const p = new THREE.Vector3(); this.muzzle.getWorldPosition(p); return p; }
-  // Wire anchor: the launch point, frozen at fire time so walking around
-  // afterwards never moves/erases the line. Falls back to the live muzzle.
-  get anchor() { return this._deployment ? this._deployment.origin.clone() : this.muzzleWorld; }
+  // Wire anchor: the LIVE muzzle, so the line follows the gun as you move.
+  get anchor() { return this.muzzleWorld; }
 
   _mkDart(start, dir) {
     const mesh = new THREE.Mesh(DART_GEO, DART_MAT);
@@ -114,13 +113,13 @@ export class DartGun {
   // the dart's path IS the reticle ray → it lands exactly where the ring shows.
   fireSingle(start, dir) {
     this._kick = 0.1;
-    this._deployment = { type: 'single', origin: this.muzzleWorld, darts: [this._mkDart(start, dir)], electrified: false };
+    this._deployment = { type: 'single', darts: [this._mkDart(start, dir)], electrified: false };
     this._rebuildWire();
   }
 
   fireTriangle(start, dirs) {
     this._kick = 0.14;
-    this._deployment = { type: 'triangle', origin: this.muzzleWorld, darts: dirs.map(d => this._mkDart(start, d)), electrified: false };
+    this._deployment = { type: 'triangle', darts: dirs.map(d => this._mkDart(start, d)), electrified: false };
     this._rebuildWire();
   }
 
@@ -142,10 +141,12 @@ export class DartGun {
 
   getTips() { return this._deployment ? this._deployment.darts.map(d => d.tip.clone()) : []; }
 
-  // Wire segments (world-space [a,b] pairs): pyramid sides + triangle base
+  // Wire segments (world-space [a,b] pairs): pyramid sides + triangle base.
+  // Anchored to the LIVE muzzle so the wires follow the gun around; rebuilt
+  // every frame while deployed.
   getWireSegments() {
     if (!this._deployment) return [];
-    const m = this._deployment.origin, t = this._deployment.darts.map(d => d.tip);
+    const m = this.muzzleWorld, t = this._deployment.darts.map(d => d.tip);
     if (this._deployment.type === 'single') return [[m, t[0]]];
     return [[m, t[0]], [m, t[1]], [m, t[2]], [t[0], t[1]], [t[1], t[2]], [t[2], t[0]]];
   }

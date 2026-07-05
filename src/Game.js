@@ -71,6 +71,16 @@ export class Game {
     this._dartReticle = this._makeDartReticle();
     this.scene.add(this._dartReticle);
 
+    // Invisible roof at wall height — darts can stick to it (colorWrite:false
+    // keeps it raycastable but never drawn; ordinary bullets ignore it).
+    this._dartRoof = new THREE.Mesh(
+      new THREE.PlaneGeometry(60, 60),
+      new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    this._dartRoof.rotation.x = Math.PI / 2;
+    this._dartRoof.position.y = 3;
+    this.scene.add(this._dartRoof);
+
     this.hp    = MAX_HP;
     this.armor = MAX_ARMOR;
     this.hud.setHealth(this.hp, this.armor);
@@ -510,8 +520,8 @@ export class Game {
     return g;
   }
 
-  // Targets a dart can stick to: every wall plus the floor.
-  _dartTargets() { return [this.world.floor, ...this.wallManager.meshes]; }
+  // Targets a dart can stick to: every wall plus the floor and the invisible roof.
+  _dartTargets() { return [this.world.floor, this._dartRoof, ...this.wallManager.meshes]; }
 
   // Cast a ray and return the impact point + surface normal (or the burn-out
   // point in mid-air if nothing is within dart range).
@@ -951,7 +961,7 @@ export class Game {
     const dt  = Math.min((now - this._prevTime) / 1000, 0.05);
     this._prevTime = now;
 
-    this.localPlayer.update(dt, this.wallManager, this._dividers, [this.world.floor]);
+    this.localPlayer.update(dt, this.wallManager, this._dividers, [this.world.floor, this._dartRoof]);
     for (const rp of this.remotePlayers.values()) rp.update(dt);
     this._updateParticles(dt);
     this._updateDartReticle();
